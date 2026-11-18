@@ -1,5 +1,6 @@
 {
-  "start": "2026-11-16",
+  "start": "2026-11-17",
   "cash": 3000.0,
-  "strategy": "breakout"
+  "strategy": "breakout",
+  "universe": "sp500"
 }

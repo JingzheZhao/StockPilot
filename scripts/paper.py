@@ -12,6 +12,12 @@ engine's no-look-ahead rule (tested in tests/test_engine.py) means replaying
 gives the same history every day plus the newest day, so paper results and
 backtest results come from one piece of code.
 
+Universe: by default each month's 50 most traded S&P 500 members, chosen with
+the same point-in-time rule as `scripts/backtest.py --universe sp500`, so paper
+results can be compared with that backtest. The membership file is extended
+with the new month's snapshot at the start of each run (one Wikipedia request
+per new month); if that fails, the latest saved snapshot is used.
+
 Output: a report in paper/reports/<date>.md, and every order the agent
 announced is appended to paper/orders_log.csv so it can be audited later.
 """
@@ -32,10 +38,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from stockpilot.backtest.engine import BacktestConfig, buy_and_hold, run_backtest  # noqa: E402
-from stockpilot.config import BENCHMARK, UNIVERSE  # noqa: E402
-from stockpilot.data.market import load_prices  # noqa: E402
+from stockpilot.config import BENCHMARK, CURATED, SP500_HISTORY, SP500_TOP_N  # noqa: E402
+from stockpilot.data.market import download_many  # noqa: E402
 from stockpilot.strategy import STRATEGIES  # noqa: E402
 from stockpilot.strategy.indicators import sma  # noqa: E402
+from stockpilot.universe import monthly_members, top_liquid_eligibility  # noqa: E402
+
+UNIVERSE_LABEL = {
+    "sp500": f"S&P 500 members, top {SP500_TOP_N} by 60-day dollar volume, refreshed monthly",
+    "curated": "fixed list of 37 large caps and ETFs",
+}
 
 PAPER = ROOT / "paper"
 NY = ZoneInfo("America/New_York")
@@ -43,11 +55,47 @@ HISTORY_DAYS = 600  # enough for the 200-day market filter and 60-day momentum
 REASON = {"signal": "closed below 50-day MA", "stop": "stop-loss hit"}
 
 
-def load_config(cash: float, strategy: str) -> dict:
+def load_config(cash: float, strategy: str, universe: str) -> dict:
     path = PAPER / "config.json"
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    return {"start": None, "cash": cash, "strategy": strategy}
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        cfg.setdefault("universe", "curated")  # accounts started before universes existed
+        return cfg
+    return {"start": None, "cash": cash, "strategy": strategy, "universe": universe}
+
+
+def update_membership() -> pd.DataFrame:
+    """Add any missing monthly S&P 500 snapshots, then load the full history."""
+    from stockpilot.data.sp500 import build_history, load_history
+
+    path = ROOT / SP500_HISTORY
+    try:
+        build_history("2014-01-01", None, path)
+    except Exception as exc:  # Wikipedia down or rate-limited: keep last month's list
+        logging.warning("Could not update S&P 500 membership (%s); using saved snapshots", exc)
+    return load_history(path)
+
+
+def load_market(cfg: dict, since: str):
+    """Prices for the paper universe; adds an Eligible column for sp500."""
+    if cfg["universe"] == "curated":
+        data = download_many([BENCHMARK, *CURATED], since)
+        return data, None
+    history = update_membership()
+    members = monthly_members(history)
+    # Everyone who was a member in any snapshot since the price window began:
+    # needed both to rank this month and to keep pricing stocks we still hold.
+    recent = {s for m, syms in members.items() if m >= pd.Timestamp(since) for s in syms}
+    data = download_many([BENCHMARK, *sorted(recent)], since)
+    return data, members
+
+
+def attach_eligibility(data: dict, members: dict, calendar: pd.DatetimeIndex) -> list[str]:
+    elig = top_liquid_eligibility(data, members, calendar, top_n=SP500_TOP_N)
+    for s in list(data):
+        data[s] = data[s].assign(Eligible=elig[s].reindex(data[s].index).fillna(False))
+    today = elig.iloc[-1]
+    return sorted(today[today].index)
 
 
 def drop_incomplete_today(data: dict[str, pd.DataFrame]) -> None:
@@ -60,7 +108,8 @@ def drop_incomplete_today(data: dict[str, pd.DataFrame]) -> None:
         data[sym] = df[df.index < today]
 
 
-def build_report(res, bench: pd.Series, market: pd.DataFrame, cfg: dict) -> str:
+def build_report(res, bench: pd.Series, market: pd.DataFrame, cfg: dict,
+                 universe_now: list[str] | None) -> str:
     asof = res.equity.index[-1].date()
     eq = res.equity.iloc[-1]
     ret = eq / cfg["cash"] - 1
@@ -74,6 +123,9 @@ def build_report(res, bench: pd.Series, market: pd.DataFrame, cfg: dict) -> str:
     L.append(f"- SPY buy-and-hold over the same period: {bret:+.2%}")
     L.append("- Market filter: " + ("ON (SPY above its 200-day MA, new buys allowed)" if filt
                                    else "OFF (SPY below its 200-day MA, no new buys)"))
+    L.append(f"- Universe: {UNIVERSE_LABEL[cfg['universe']]}")
+    if universe_now:
+        L.append(f"- Buyable this month ({len(universe_now)}): {' '.join(universe_now)}")
     L.append("")
 
     L.append("## Orders for the next open")
@@ -128,7 +180,8 @@ def log_orders(res) -> None:
     pd.concat([old, pd.DataFrame(rows)], ignore_index=True).to_csv(path, index=False)
 
 
-def snapshot(res, bench: pd.Series, market: pd.DataFrame, cfg: dict, report: str) -> dict:
+def snapshot(res, bench: pd.Series, market: pd.DataFrame, cfg: dict, report: str,
+             universe_now: list[str] | None) -> dict:
     """Structured copy of today's state, read by the Muse connector (muse/)."""
     m = market["Close"]
     eq = float(res.equity.iloc[-1])
@@ -137,6 +190,8 @@ def snapshot(res, bench: pd.Series, market: pd.DataFrame, cfg: dict, report: str
         "asof": str(res.equity.index[-1].date()),
         "start": cfg["start"],
         "strategy": cfg["strategy"],
+        "universe": UNIVERSE_LABEL[cfg["universe"]],
+        "buyable_this_month": universe_now or [],
         "initial_cash": cfg["cash"],
         "equity": round(eq, 2),
         "return_pct": round(eq / cfg["cash"] - 1, 4),
@@ -171,35 +226,41 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--cash", type=float, default=3000.0, help="starting USD (first run only)")
     p.add_argument("--strategy", default="breakout", choices=list(STRATEGIES))
+    p.add_argument("--universe", default="sp500", choices=list(UNIVERSE_LABEL),
+                   help="universe for a NEW account (first run only)")
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     PAPER.mkdir(exist_ok=True)
     (PAPER / "reports").mkdir(exist_ok=True)
 
-    cfg = load_config(args.cash, args.strategy)
+    cfg = load_config(args.cash, args.strategy, args.universe)
     since = (pd.Timestamp.now() - pd.Timedelta(days=HISTORY_DAYS)).strftime("%Y-%m-%d")
     if cfg["start"]:
         since = min(since, (pd.Timestamp(cfg["start"]) - pd.Timedelta(days=HISTORY_DAYS)).strftime("%Y-%m-%d"))
-    data = load_prices([BENCHMARK, *UNIVERSE], since, refresh=True, cache_dir=PAPER / "cache")
+    data, members = load_market(cfg, since)
     if BENCHMARK not in data:
         sys.exit("SPY download failed; skipping today's run.")
     drop_incomplete_today(data)
     market = data.pop(BENCHMARK)
+    universe_now = attach_eligibility(data, members, market.index) if members else None
 
     if not cfg["start"]:
         cfg["start"] = str(market.index[-1].date())  # first completed day = day 1
         (PAPER / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+    if members:  # stocks never buyable since the start cannot be held; skip them for speed
+        data = {s: d for s, d in data.items() if d.loc[cfg["start"]:, "Eligible"].any()}
 
     bt_cfg = BacktestConfig(initial_cash=cfg["cash"])
     res = run_backtest(data, STRATEGIES[cfg["strategy"]](), market, bt_cfg,
                        start=cfg["start"], close_at_end=False)
     bench = buy_and_hold(market, cfg["cash"], cfg["start"], None, bt_cfg.costs)
 
-    report = build_report(res, bench, market, cfg)
+    report = build_report(res, bench, market, cfg, universe_now)
     asof = res.equity.index[-1].date()
     (PAPER / "reports" / f"{asof}.md").write_text(report, encoding="utf-8")
     log_orders(res)
-    snap = json.dumps(snapshot(res, bench, market, cfg, report), ensure_ascii=False, indent=2)
+    snap = json.dumps(snapshot(res, bench, market, cfg, report, universe_now), ensure_ascii=False, indent=2)
     out = ROOT / "muse" / "data" / "latest.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(snap, encoding="utf-8")

@@ -72,7 +72,7 @@ Findings:
 
 ## Paper trading
 
-Run `python scripts/paper.py` once per trading day. The first run records a start date and starting cash in `paper/config.json`. Each later run downloads fresh prices and replays the same backtest engine from the start date to the latest completed session with positions left open, which yields the orders for the next open. Paper trading and backtesting share one code path, so their results are directly comparable.
+Run `python scripts/paper.py` once per trading day. It uses the `sp500` universe (each month's 50 most traded S&P 500 members), the same rule as the unbiased backtest, so paper results can be compared with it. Each run first adds the new month's membership snapshot from Wikipedia if it is missing; if that fails, it keeps using the latest saved one. The first run records a start date, starting cash and universe in `paper/config.json`. Each later run downloads fresh prices and replays the same backtest engine from the start date to the latest completed session with positions left open, which yields the orders for the next open. Paper trading and backtesting share one code path, so their results are directly comparable.
 
 - Daily report: `paper/reports/<date>.md`
 - Every order announced each day: `paper/orders_log.csv`, for later auditing

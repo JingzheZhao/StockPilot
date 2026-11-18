@@ -14,7 +14,7 @@ KEY = "test-key-0123456789-abcdefghij"
 SNAP = {
     "asof": "2026-11-16", "start": "2026-11-16", "strategy": "breakout", "initial_cash": 3000,
     "equity": 3012.5, "return_pct": 0.0042, "spy_return_pct": 0.002, "market_filter_on": True,
-    "fees_paid": 2.0,
+    "fees_paid": 2.0, "universe": "S&P 500 top 50", "buyable_this_month": ["AAPL", "NVDA"],
     "next_open_orders": [{"side": "BUY", "symbol": "KO", "shares": 6.0, "approx_value": 600.0}],
     "positions": [{"symbol": "PG", "shares": 3.4, "entry_date": "2026-11-17", "entry_price": 173.0,
                    "last_close": 175.0, "pnl_pct": 0.0116, "stop": 166.1}],
@@ -86,6 +86,7 @@ def test_tools_return_snapshot_data(server):
     _, r = call(url, 1, "tools/call", {"name": "get_summary", "arguments": {}})
     s = r["result"]["structuredContent"]
     assert s["equity"] == 3012.5 and s["open_positions"] == 1 and s["next_open_orders"] == 1
+    assert s["buyable_this_month"] == ["AAPL", "NVDA"]
     _, r = call(url, 2, "tools/call", {"name": "get_closed_trades", "arguments": {"limit": 3}})
     t = r["result"]["structuredContent"]["trades"]
     assert [x["symbol"] for x in t] == ["T29", "T28", "T27"]  # newest first

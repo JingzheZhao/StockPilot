@@ -26,6 +26,39 @@ def _download(symbol: str, start: str, end: str | None) -> pd.DataFrame:
     return df
 
 
+def download_many(symbols: list[str], start: str, chunk: int = 100) -> dict[str, pd.DataFrame]:
+    """Fresh daily bars for many symbols, fetched in batches (no cache).
+
+    Much faster than one request per symbol; used by daily paper trading,
+    which needs ~500 S&P 500 members to rank them by trading volume.
+    """
+    import yfinance as yf
+
+    out: dict[str, pd.DataFrame] = {}
+    for i in range(0, len(symbols), chunk):
+        batch = symbols[i:i + chunk]
+        raw = yf.download(batch, start=start, auto_adjust=True, progress=False,
+                          threads=True, group_by="ticker")
+        if raw is None or raw.empty:
+            continue
+        for sym in batch:
+            if not isinstance(raw.columns, pd.MultiIndex):
+                df = raw  # single-symbol batch
+            elif sym in raw.columns.get_level_values(0):
+                df = raw[sym]
+            else:
+                continue
+            df = df.dropna(how="all")
+            if df.empty:
+                continue
+            try:
+                out[sym] = clean(df, sym)
+            except KeyError:
+                log.warning("Skipping %s: missing columns", sym)
+        log.info("Downloaded %d/%d symbols", min(i + chunk, len(symbols)), len(symbols))
+    return out
+
+
 def clean(df: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
     """Normalize columns/index and drop bad rows."""
     df = df[COLUMNS].copy()

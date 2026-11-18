@@ -42,8 +42,9 @@ TOOLS = [
     {
         "name": "get_summary",
         "description": "Account overview: data date, simulated account value, return since start "
-                       "vs simply holding SPY, whether the market filter allows new buys, and counts "
-                       "of open positions and orders for the next open.",
+                       "vs simply holding SPY, whether the market filter allows new buys, the stock "
+                       "universe and this month's buyable stocks, and counts of open positions and "
+                       "orders for the next open.",
         "inputSchema": NO_ARGS,
     },
     {
@@ -82,8 +83,9 @@ def load() -> dict:
 def call_tool(name: str, args: dict) -> dict:
     d = load()
     if name == "get_summary":
-        return {k: d[k] for k in ("asof", "start", "strategy", "initial_cash", "equity",
-                                  "return_pct", "spy_return_pct", "market_filter_on", "fees_paid")} | {
+        return {k: d.get(k) for k in ("asof", "start", "strategy", "universe", "initial_cash", "equity",
+                                      "return_pct", "spy_return_pct", "market_filter_on", "fees_paid")} | {
+            "buyable_this_month": d.get("buyable_this_month", []),
             "open_positions": len(d["positions"]),
             "next_open_orders": len(d["next_open_orders"]),
             "closed_trades": len(d["closed_trades"]),
@@ -171,13 +173,17 @@ class handler(BaseHTTPRequestHandler):  # Vercel looks for a class named "handle
             self.wfile.write(payload)
 
     def do_POST(self):
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            n = -1
+        if n < 0 or n > 1_000_000:
+            return self._send(413, {"error": "request too large"})
+        body = self.rfile.read(n)  # read before replying, even when rejecting
         if not authorized(self.headers):
             return self._send(401, {"error": "unauthorized"}, {"WWW-Authenticate": "Bearer"})
         try:
-            n = int(self.headers.get("Content-Length", 0))
-            if n > 1_000_000:
-                return self._send(413, {"error": "request too large"})
-            msg = json.loads(self.rfile.read(n) or b"null")
+            msg = json.loads(body or b"null")
         except (ValueError, json.JSONDecodeError):
             return self._send(400, rpc_error(None, -32700, "Parse error"))
         if isinstance(msg, list):  # batches are not part of the current spec
