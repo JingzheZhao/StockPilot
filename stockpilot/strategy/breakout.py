@@ -16,6 +16,7 @@ class Breakout(Strategy):
     breakout_days: int = 20
     trend_ma: int = 50
     atr_days: int = 14
+    ma_exit: bool = True  # exit when the close falls below the trend MA
 
     def prepare(self, df: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
         c = df["Close"]
@@ -23,7 +24,7 @@ class Breakout(Strategy):
         hh = prior_high(c, self.breakout_days)
         out = pd.DataFrame(index=df.index)
         out["entry"] = self.market_ok(df, market) & (c > ma) & (c > hh)
-        out["exit"] = c < ma
+        out["exit"] = (c < ma) if self.ma_exit else False
         out["atr"] = atr(df, self.atr_days)
         out["score"] = momentum(c, 60)
         out["entry"] &= out["atr"].notna() & out["score"].notna()

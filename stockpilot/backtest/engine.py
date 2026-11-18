@@ -48,6 +48,9 @@ class BacktestConfig:
     max_position_pct: float = 0.20
     max_positions: int = 5
     atr_stop_mult: float = 2.0
+    # Trailing stop: after each close, stop = max(stop, highest close since
+    # entry - trail_atr_mult * ATR). None disables it.
+    trail_atr_mult: float | None = None
     fractional: bool = True  # IBKR supports fractional US shares
     min_order_value: float = 50.0
     costs: Costs = field(default_factory=Costs)
@@ -62,6 +65,7 @@ class Position:
     entry_fee: float
     stop: float
     bars_held: int = 0
+    peak_close: float = 0.0  # highest close since entry, for the trailing stop
 
 
 @dataclass
@@ -191,6 +195,7 @@ def run_backtest(
                 entry_price=price,
                 entry_fee=fee,
                 stop=price - cfg.atr_stop_mult * order.atr,
+                peak_close=price,
             )
         pending_entries = []
 
@@ -211,6 +216,15 @@ def run_backtest(
                 last_close[sym] = float(b["Close"])
         for pos in positions.values():
             pos.bars_held += 1
+            # Trailing stop: uses today's close and ATR, takes effect from
+            # tomorrow's intraday check, so no future data is involved.
+            if cfg.trail_atr_mult is not None:
+                b = bar(pos.symbol, day)
+                if b is not None:
+                    pos.peak_close = max(pos.peak_close, float(b["Close"]))
+                    a = float(b["atr"])
+                    if a == a:  # not NaN
+                        pos.stop = max(pos.stop, pos.peak_close - cfg.trail_atr_mult * a)
         equity = cash + sum(p.shares * last_close[p.symbol] for p in positions.values())
         equity_curve[day] = equity
         pos_count[day] = len(positions)

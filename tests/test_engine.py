@@ -151,6 +151,50 @@ def test_keep_open_matches_closed_run_until_the_end():
     assert len(a.trades) == len(b.trades) + len(b.open_positions)
 
 
+def test_trailing_stop_follows_price_up_and_never_down():
+    df = flat_bars(n=14)
+    # Entry on day 2 at 100. Price climbs to 120 by day 6, then slides.
+    closes = [100, 100, 100, 105, 110, 115, 120, 118, 116, 114, 112, 110, 108, 106]
+    for i, c in enumerate(closes):
+        df.loc[df.index[i], ["Open", "High", "Low", "Close"]] = [c, c + 0.5, c - 0.5, c]
+    strat = Scripted(entries=(df.index[1],), atr_value=2.0)  # initial stop 96
+    cfg = BacktestConfig(costs=NO_SLIP, trail_atr_mult=3.0)
+    res = run_backtest({"X": df}, strat, df, cfg, close_at_end=False)
+    # Peak close 120 (day 6) -> trailing stop 120 - 3*2 = 114. Day 9 opens at
+    # 114 with a low of 113.5, so the stop fills there at 114. Without the
+    # trailing stop the position would still be open (initial stop 96).
+    t = res.trades.iloc[0]
+    assert t["exit_reason"] == "stop"
+    assert t["exit_date"] == df.index[9]
+    assert t["exit_price"] == pytest.approx(114.0)
+
+
+def test_trailing_stop_off_keeps_initial_stop():
+    df = flat_bars(n=14)
+    closes = [100, 100, 100, 105, 110, 115, 120, 118, 116, 114, 112, 110, 108, 106]
+    for i, c in enumerate(closes):
+        df.loc[df.index[i], ["Open", "High", "Low", "Close"]] = [c, c + 0.5, c - 0.5, c]
+    strat = Scripted(entries=(df.index[1],), atr_value=2.0)
+    res = run_backtest({"X": df}, strat, df, BacktestConfig(costs=NO_SLIP), close_at_end=False)
+    assert res.trades.empty and res.open_positions[0].stop == pytest.approx(96.0)
+
+
+def test_no_lookahead_with_trailing_stop():
+    syms = [f"S{i}" for i in range(8)]
+    data = make_universe(syms, n_days=1000, seed=7)
+    market = make_ohlcv(1000, seed=11, drift=0.0005)
+    cut = market.index[700]
+    cfg = BacktestConfig(trail_atr_mult=3.0)
+    strat = Breakout(ma_exit=False)
+    base = run_backtest(data, strat, market, cfg)
+    mutated = {s: d.copy() for s, d in data.items()}
+    for d in mutated.values():
+        d.loc[d.index >= cut, ["Open", "High", "Low", "Close"]] *= 0.6
+    alt = run_backtest(mutated, strat, market, cfg)
+    before = base.equity.index < cut
+    pd.testing.assert_series_equal(base.equity[before], alt.equity[before])
+
+
 def test_prior_high_excludes_today():
     s = pd.Series([1, 2, 3, 10, 4], dtype=float)
     ph = prior_high(s, 3)

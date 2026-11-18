@@ -61,6 +61,15 @@ Findings:
 
 **Rejected strategy.** A trend-pullback strategy (buy when the close reclaims the 20-day MA) was tested alongside. It returned 16.0% CAGR in 2015–2021 but −8.9% from 2022, with a −46.9% max drawdown. The cause: entries sat too close to the 50-day MA exit line. 37% of trades entered within 1% of it and were shaken out by small moves, and fees reached almost half of the starting cash. Adding entry and exit buffers cut the drawdown to −18%, but CAGR from 2022 was only 3.3%, far behind breakout, so the strategy was removed.
 
+## Experiments
+
+Each experiment's plan is written and committed under `experiments/` **before** it runs: variants, selection rule and pass criterion are fixed in advance. Variants are compared on 2015–2021 only; the single pick is then tested once on 2022 onward. This keeps the later years a genuine out-of-sample test.
+
+| # | Idea | Result |
+|---|---|---|
+| [001](experiments/001_trailing_stop.md) | ATR trailing stop to let winners run | **Failed.** Tighter than the 50-day-MA exit; shorter holds, more fees, lower CAGR in every variant. Out-of-sample not used. |
+| [002](experiments/002_spy_trend_benchmark.md) | Benchmark: hold SPY only while it is above its 200-day MA | Beats breakout_v1 over the full period (8.6% vs 7.6% CAGR, −19.9% vs −25.8% max drawdown, 63 vs 423 trades). Stock selection is not adding value. Versus buy-and-hold the filter trades 4.6% a year of return for a shallower drawdown. |
+
 ## Backtest assumptions
 
 - **Timing**: signals form after the close of day t and fill at the open of day t+1. Share counts use the close of day t, because the next open is unknown when the order is placed.
