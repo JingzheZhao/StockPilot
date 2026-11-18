@@ -1,0 +1,29 @@
+name: Tests
+
+on:
+  push:
+    paths-ignore: # the daily job only commits data; no need to retest for that
+      - "paper/**"
+      - "muse/data/**"
+      - "data/universe/**"
+  pull_request: {}
+  workflow_dispatch: {}
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q

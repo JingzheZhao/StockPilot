@@ -1,6 +1,98 @@
 # StockPilot
 
-A personal, rule-based US stock trading agent. Strategies are validated by backtest first, then run on a paper-trading account with simulated money. It runs daily in the cloud and can be queried from a phone through Meta Muse.
+![Tests](https://github.com/JingzheZhao/StockPilot/actions/workflows/tests.yml/badge.svg)
+
+A rule-based US stock trading research system: a backtest engine built to avoid look-ahead and survivorship bias, a set of pre-registered experiments, and a paper-trading agent that runs daily in the cloud and can be queried from a phone through Meta Muse.
+
+**Status: research concluded.** None of the strategies tested beat simply holding the S&P 500 in a robust, risk-controlled way once the data was cleaned of hindsight. The system keeps running as a live paper-trading demo with simulated money.
+
+## Key findings
+
+| Finding | Evidence |
+|---|---|
+| **A hand-picked stock list inflated returns by about 4.5% a year.** | The same breakout rules earned 12.1% a year on 37 stocks chosen in 2026, but 7.6% on a point-in-time S&P 500 universe rebuilt from Wikipedia page history. |
+| **The breakout strategy loses to the simplest version of its own idea.** | Holding SPY only while it is above its 200-day moving average earned 8.6% a year with a −19.9% worst drawdown, against breakout's 7.6% and −25.8%, using one-seventh of the trades. ([002](experiments/002_spy_trend_benchmark.md)) |
+| **Buy-and-hold had the highest return.** | SPY buy-and-hold: 13.2% a year, −33.7% worst drawdown, over 2015-01 to 2026-11. |
+| **A trailing stop made things worse.** | ATR trailing stops were tighter than the existing exit; every variant held winners for less time, paid more fees and earned less. ([001](experiments/001_trailing_stop.md)) |
+| **Monthly momentum passed on paper but was not accepted.** | It beat both benchmarks from 2022 (18.5% a year) but lost to them in 2015–2021, fell 50% from a 2026 peak, and had a lower Sharpe ratio than buy-and-hold. ([003](experiments/003_monthly_momentum.md)) |
+
+All figures: $3,000 starting cash, after commissions and slippage.
+
+## How it works
+
+```mermaid
+flowchart LR
+    W[Wikipedia page history] -->|monthly S&P 500 members| U[Point-in-time universe]
+    Y[Yahoo Finance daily prices] --> E
+    U --> E[Backtest engine<br/>next-open fills, costs, stops]
+    E --> X[Experiments<br/>plan written before running]
+    E --> P[Paper trading<br/>replays the same engine daily]
+    GA[GitHub Actions<br/>every trading day] --> P
+    P -->|daily report + JSON snapshot| R[(GitHub repo)]
+    R -->|redeploy on commit| V[Vercel: read-only MCP server]
+    V -->|API key| M[Meta Muse on phone]
+```
+
+- **One code path.** Paper trading replays the backtest engine from its start date every day with positions left open. The orders it announces for the next open come from exactly the code that produced the backtests.
+- **Read-only connector.** The MCP server on Vercel can only read the latest snapshot. It has no tool that places orders or changes anything, and it rejects requests without the API key.
+
+## Methodology
+
+**No look-ahead.** Signals use data up to the close of day *t*; orders fill at the open of day *t+1*. Share counts are fixed from the close of *t*, because the next open is unknown when the order is placed. Tests rewrite all prices after a cut-off date and check that every result before it is unchanged, for the breakout engine, the trailing stop, the momentum rotation and the market-timing benchmark.
+
+**Point-in-time universe.** For each month, S&P 500 membership is taken from the Wikipedia revision that was live on the first of the month (155 snapshots, 792 distinct stocks). Renamed tickers are joined through SEC CIK numbers (e.g. FB → META, BBT → TFC). The `sp500` universe uses the 50 members with the highest 60-day dollar volume, ranked on data from before the month starts.
+
+**Realistic costs.** IBKR Pro fixed commissions ($0.005 per share, $1 minimum, capped at 1% of trade value) plus 5 bps slippage per side. Stops that gap through fill at the open, not at the stop price.
+
+**Pre-registered experiments.** Each experiment's variants, selection rule and acceptance criteria are written and committed before any code runs ([template](experiments/TEMPLATE.md)). Variants are compared on 2015–2021 only; the single pick is tested once on 2022 onward. Failed and inconvenient results are recorded as they came out, and corrections after external review are marked as such.
+
+## Results by universe (breakout_v1)
+
+| Universe | How stocks are chosen | CAGR | Max drawdown | Trades | Fees |
+|---|---|---|---|---|---|
+| `curated` | 37 large caps and ETFs picked by hand in 2026 (hindsight) | 12.1% | −24.5% | 384 | $791 |
+| `sp500` | Monthly top 50 by dollar volume among that month's S&P 500 members | 7.6% | −25.8% | 423 | $849 |
+| `etf` | 11 SPDR sector ETFs plus QQQ, IWM, DIA | 1.2% | −27.6% | 396 | $792 |
+| SPY buy-and-hold | | 13.2% | −33.7% | 1 | $1 |
+
+- On `sp500`, five trades (MU, NVDA, SNDK, PLTR, CVX) produced 89% of gross profit, so the result depends heavily on catching a few big winners.
+- On `etf`, the average winning trade made 7% and the $1 minimum commission took 64% of gross profit.
+- An earlier trend-pullback strategy was dropped: 16.0% a year in 2015–2021 but −8.9% from 2022. Its entries sat too close to its own exit line, so small moves shook positions out.
+
+## Strategy: breakout_v1
+
+| | Rule |
+|---|---|
+| Market filter | Open new positions only when SPY closes above its 200-day MA |
+| Entry | Close above the 50-day MA and a new 20-day closing high |
+| Exit | Close below the 50-day MA, or the stop-loss |
+| Stop-loss | Entry price − 2 × ATR(14) |
+| Sizing | Risk 2% of equity to the stop; at most 20% of equity per stock; at most 5 positions |
+| Ranking | 60-day momentum when there are more candidates than free slots |
+
+Notes from an external review: the 2% risk is a target, not a cap. An overnight gap below the stop fills at the open, so 12 of 289 losing trades on `sp500` lost more than 2% of equity (worst: 4.96%). The market filter only blocks new buys; it does not sell existing positions. There is no sector limit.
+
+## Repository layout
+
+```
+stockpilot/
+  backtest/engine.py     portfolio backtest: next-open fills, stops, costs, paper mode
+  backtest/timing.py     single-asset moving-average timing (benchmark)
+  backtest/rotation.py   monthly momentum rotation
+  backtest/metrics.py    CAGR, drawdown, Sharpe, trade statistics
+  strategy/              breakout_v1 and indicators
+  data/market.py         Yahoo download, cleaning, cache
+  data/sp500.py          point-in-time S&P 500 membership from Wikipedia history
+  universe.py            monthly top-N eligibility
+scripts/
+  backtest.py            backtest by universe and period
+  paper.py               daily paper-trading run
+  build_sp500_history.py rebuild the membership file
+experiments/             plans, runners and results for each experiment
+muse/                    read-only MCP server for Vercel
+paper/                   paper account: config, daily reports, order log
+tests/                   32 tests, including look-ahead checks
+```
 
 ## Quick start
 
@@ -9,117 +101,26 @@ python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 
-pytest                             # all tests should pass
-python scripts/backtest.py         # download data and backtest (~1 minute the first time)
-python scripts/paper.py            # paper trading: run one trading day
+pytest                                         # all tests should pass
+python scripts/backtest.py --universe sp500    # downloads ~800 stocks the first time
+python scripts/paper.py                        # one paper-trading day
+python experiments/run_002_spy_trend.py        # reproduce an experiment
 ```
 
-## Strategy: breakout_v1
+## Cloud setup
 
-| | Rule |
-|---|---|
-| Market filter | Buy only when SPY closes above its 200-day MA |
-| Entry | Close above the 50-day MA and a new 20-day closing high |
-| Exit | Close below the 50-day MA |
-| Stop-loss | Entry price − 2 × ATR(14) |
-| Ranking | 60-day momentum |
-
-Parameters were not tuned on any period. To add a strategy, implement `prepare()` under `stockpilot/strategy/`.
-
-## Backtest
-
-`python scripts/backtest.py --universe <curated|etf|sp500>` tests the strategy over three periods (2015–2021, 2022 to date, full) and compares it with SPY buy-and-hold. Results go to `results/<universe>/`: `summary.md`, equity curves `equity_<period>.png`, and per-trade logs `trades_<strategy>_<period>.csv`. Options: `--cash 5000` sets starting cash, `--refresh` re-downloads prices, `--demo` runs offline on synthetic data.
-
-### Universes
-
-| Universe | How stocks are chosen | Survivorship bias |
-|---|---|---|
-| `curated` | 37 large caps and ETFs picked by hand in 2026 | High: picked with hindsight |
-| `etf` | 11 SPDR sector ETFs plus QQQ, IWM, DIA | None: no fund closed during the test |
-| `sp500` | Each month, the 50 most traded stocks (60-day average dollar volume, measured before the month starts) among that month's S&P 500 members | Low: membership is point-in-time; 8.2% of member-months lack price data (mostly delisted or acquired companies) |
-
-S&P 500 membership comes from the Wikipedia revision live on the first day of each month (`scripts/build_sp500_history.py` → `data/universe/sp500_monthly.csv`). Tickers that changed are mapped to one symbol through the company's SEC CIK number.
-
-### Results
-
-$3,000 starting cash, after commissions and slippage, 2015-01 to 2026-11:
-
-| Universe | CAGR | Max drawdown | Trades | Fees | Top 5 trades' share of gross profit |
-|---|---|---|---|---|---|
-| `curated` | 12.1% | −24.5% | 384 | $791 | 69% |
-| `sp500` | 7.6% | −25.8% | 423 | $849 | 89% |
-| `etf` | 1.2% | −27.6% | 396 | $792 | 60% |
-| SPY buy-and-hold | 13.2% | −33.7% | 1 | $1 | — |
-
-Findings:
-
-- **Survivorship bias was worth about 4.5% a year.** The same rules earn 12.1% on the hand-picked list but 7.6% on a point-in-time S&P 500 universe. The curated list's best trades were AMD, NVDA and INTC, stocks chosen knowing how they turned out.
-- **On unbiased universes the strategy does not beat buy-and-hold.** It trails SPY by 5.6% a year on `sp500` and by 12% on `etf`, with only a modestly smaller drawdown.
-- **Profits depend on a few big winners.** On `sp500`, five trades (MU, NVDA, SNDK, PLTR, CVX) produced 89% of gross profit. Missing one such trade changes the result a lot.
-- **ETFs move too little for this account size.** The average winning ETF trade made 7%, and the $1 minimum commission took 64% of gross profit.
-- The `sp500` result is still somewhat optimistic: the 8.2% of member-months without price data are mostly companies that were delisted or acquired.
-
-**Rejected strategy.** A trend-pullback strategy (buy when the close reclaims the 20-day MA) was tested alongside. It returned 16.0% CAGR in 2015–2021 but −8.9% from 2022, with a −46.9% max drawdown. The cause: entries sat too close to the 50-day MA exit line. 37% of trades entered within 1% of it and were shaken out by small moves, and fees reached almost half of the starting cash. Adding entry and exit buffers cut the drawdown to −18%, but CAGR from 2022 was only 3.3%, far behind breakout, so the strategy was removed.
-
-## Experiments
-
-Each experiment's plan is written and committed under `experiments/` **before** it runs, from [`experiments/TEMPLATE.md`](experiments/TEMPLATE.md): variants, selection rule and acceptance criteria (return, Sharpe, max drawdown, per-year results) are fixed in advance. Data from 2022 onward has been seen by experiments 002 and 003, so later ideas must be validated on new data through paper trading. Variants are compared on 2015–2021 only; the single pick is then tested once on 2022 onward. This keeps the later years a genuine out-of-sample test.
-
-| # | Idea | Result |
-|---|---|---|
-| [001](experiments/001_trailing_stop.md) | ATR trailing stop to let winners run | **Failed.** Tighter than the 50-day-MA exit; shorter holds, more fees, lower CAGR in every variant. Out-of-sample not used. |
-| [002](experiments/002_spy_trend_benchmark.md) | Benchmark: hold SPY only while it is above its 200-day MA | Beats breakout_v1 over the full period (8.6% vs 7.6% CAGR, −19.9% vs −25.8% max drawdown, 63 vs 423 trades). The full breakout rule set adds no value over the simple benchmark; which part (selection, exits or sizing) is responsible is not isolated. Versus buy-and-hold the filter trades 4.6% a year of return for a shallower drawdown. |
-| [003](experiments/003_monthly_momentum.md) | Monthly 12-1 momentum, top 10 S&P 500 stocks | **Passed the written criterion, not accepted.** Lost to both benchmarks in 2015–2021; beat them from 2022 (18.5% CAGR) but with a −50% drawdown driven by one 2026 run-up and crash, and a lower Sharpe than buy-and-hold. |
-
-## Backtest assumptions
-
-- **Timing**: signals form after the close of day t and fill at the open of day t+1. Share counts use the close of day t, because the next open is unknown when the order is placed.
-- **Stops**: checked against the intraday low from the fill day onward. If the open gaps below the stop, the fill is the open, not the stop price.
-- **Costs**: IBKR Pro fixed pricing ($0.005 per share, $1 minimum, capped at 1% of trade value), plus 5 bps slippage per side.
-- **Sizing**: a stop-out loses at most 2% of equity; one stock is at most 20% of equity; at most 5 positions; no leverage; fractional shares allowed.
-- **Currency**: everything in USD, assuming a one-time CAD→USD conversion at the start; conversion cost is not modeled.
-- **Prices**: yfinance adjusted prices (splits and dividends handled).
-
-## Paper trading
-
-Run `python scripts/paper.py` once per trading day. It uses the `sp500` universe (each month's 50 most traded S&P 500 members), the same rule as the unbiased backtest, so paper results can be compared with it. Each run first adds the new month's membership snapshot from Wikipedia if it is missing; if that fails, it keeps using the latest saved one. The first run records a start date, starting cash and universe in `paper/config.json`. Each later run downloads fresh prices and replays the same backtest engine from the start date to the latest completed session with positions left open, which yields the orders for the next open. Paper trading and backtesting share one code path, so their results are directly comparable.
-
-- Daily report: `paper/reports/<date>.md`
-- Every order announced each day: `paper/orders_log.csv`, for later auditing
-- Structured snapshot for Muse: `muse/data/latest.json`
-
-To start over, delete `paper/config.json`.
-
-## Cloud runs and the Meta Muse connector
-
-- `.github/workflows/daily.yml`: GitHub Actions runs paper trading early each morning (New York time, before the open) after every trading day and commits the report back to the repo. No local computer needs to be on.
-- `muse/`: a read-only MCP server on Vercel that uses only the Python standard library. Meta Muse uses it to query the summary, positions, orders for the next open, closed trades and the full report. It only reads `muse/data/latest.json`; it cannot place orders or change anything.
-- Auth: every request must carry the key from the Vercel environment variable `MUSE_API_KEY` (`Authorization: Bearer <key>`). If the variable is unset, the server rejects every request.
-- Each commit from Actions triggers a Vercel redeploy, so Muse always reads the latest day.
+- `.github/workflows/daily.yml` runs `scripts/paper.py` early each weekday morning (New York time, before the open) and commits the report, the order log, the Muse snapshot and any new membership snapshot.
+- `.github/workflows/tests.yml` runs the test suite on every code change.
+- `muse/` deploys to Vercel with `muse` as the root directory. Set `MUSE_API_KEY` (at least 20 characters) as an environment variable; the server rejects everything if it is missing. Every commit triggers a redeploy, so Muse reads the latest snapshot.
 
 ## Known limitations
 
-- **Survivorship bias**: the universe is large caps picked with today's knowledge; companies that failed or were delisted are missing, so backtests are optimistic.
-- **No earnings filter**: free data sources lack reliable historical earnings dates, so "no new positions before earnings" is not implemented.
-- **yfinance is not an official data source**: fine for a prototype; long-term use should switch to a data API with clear terms of service.
+- **Delisted stocks are missing.** About 8% of S&P 500 member-months have no price data, mostly companies that were later delisted or acquired. Results on `sp500` are therefore somewhat optimistic.
+- **2022 onward has been looked at.** Experiments 002 and 003 used it, so any idea developed from here can only be validated on new data, through paper trading.
+- **Free data.** yfinance is unofficial and Wikipedia's membership history can lag real index changes by days.
+- **No interest on cash** in any backtest, which understates strategies that spend time out of the market.
+- **No earnings, news or sector limits** in the strategy.
 
-## Tests
+## If this were continued
 
-`tests/test_engine.py`:
-- Signals fill at the next open; a signal on the last day never fills
-- A gap below the stop fills at the open; an intraday hit fills at the stop price
-- Sizing respects both the risk budget and the per-stock cap
-- Commission minimum and cap
-- **No look-ahead**: rewriting prices after day k leaves the equity curve and closed trades before day k unchanged
-- Paper mode (positions kept open) produces the same equity curve as a normal backtest
-
-`tests/test_muse.py`: rejects missing or wrong keys; MCP handshake works; each tool returns the right data; tools that do not exist (such as placing an order) cannot be called.
-
-## Roadmap
-
-1. ✅ Backtest engine and rule-based strategy
-2. ✅ Validate on real data; keep breakout
-3. ✅ Paper trading, daily cloud runs, Meta Muse queries
-4. Run paper trading for at least 3 months and compare it with the backtest
-5. LLM news-risk filter, as a controlled experiment: rules vs rules + LLM
-6. Confirm IBKR Canada API order permissions before considering real money
+Only ideas that clear the acceptance template, which requires beating both buy-and-hold and the 200-day-MA benchmark on return, Sharpe ratio and drawdown, would be worth paper trading. Candidates that remain untested: isolating which part of breakout_v1 hurts it (one change at a time), an LLM news-risk filter run as a paper-trading A/B test, and model-based scoring of breakout signals with walk-forward validation.
