@@ -151,7 +151,7 @@ def test_paper_run_replaces_stale_snapshot_when_spy_is_missing(tmp_path, monkeyp
     snapshot.parent.mkdir(parents=True)
     snapshot.write_text('{"status":"ORDERS QUEUED","next_open_orders":[{"symbol":"KO"}]}', encoding="utf-8")
 
-    paper.main()
+    assert paper.main() == "DATA ERROR"  # the script then exits non-zero so the job fails visibly
 
     updated = json.loads(snapshot.read_text(encoding="utf-8"))
     assert updated["status"] == "DATA ERROR"

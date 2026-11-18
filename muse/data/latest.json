@@ -5,6 +5,7 @@
   "asof": "2026-11-17",
   "latest_completed_session": "2026-11-17",
   "orders_valid_for_open_of": "2026-11-18",
+  "orders_expire_at": "2026-11-18T14:30:00+00:00",
   "start": "2026-11-17",
   "strategy": "breakout",
   "universe": "S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly",

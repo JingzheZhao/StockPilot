@@ -32,7 +32,9 @@ jobs:
         run: pip install -e .
 
       - name: Run paper trading
+        id: paper
         run: python scripts/paper.py
+        continue-on-error: true # still commit a DATA ERROR status so Muse shows it
 
       - name: Commit results
         run: |
@@ -45,3 +47,9 @@ jobs:
             git commit -m "Paper trading report $(date -u +%Y-%m-%d)"
             git push
           fi
+
+      - name: Fail the run if paper trading reported a data error or crashed
+        if: steps.paper.outcome == 'failure'
+        run: |
+          echo "scripts/paper.py failed or reported DATA ERROR; see the report committed above."
+          exit 1

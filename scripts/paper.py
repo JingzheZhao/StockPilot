@@ -372,7 +372,10 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     ledger.atomic_write(out, json.dumps(snap, ensure_ascii=False, indent=2, default=str))
     print(report)
+    return status
 
 
 if __name__ == "__main__":
-    main()
+    # Exit non-zero on a data error, after the error status has been written,
+    # so the scheduled job can publish that status and still fail visibly.
+    sys.exit(2 if main() == "DATA ERROR" else 0)
