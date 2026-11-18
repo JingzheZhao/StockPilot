@@ -63,12 +63,13 @@ Findings:
 
 ## Experiments
 
-Each experiment's plan is written and committed under `experiments/` **before** it runs: variants, selection rule and pass criterion are fixed in advance. Variants are compared on 2015–2021 only; the single pick is then tested once on 2022 onward. This keeps the later years a genuine out-of-sample test.
+Each experiment's plan is written and committed under `experiments/` **before** it runs, from [`experiments/TEMPLATE.md`](experiments/TEMPLATE.md): variants, selection rule and acceptance criteria (return, Sharpe, max drawdown, per-year results) are fixed in advance. Data from 2022 onward has been seen by experiments 002 and 003, so later ideas must be validated on new data through paper trading. Variants are compared on 2015–2021 only; the single pick is then tested once on 2022 onward. This keeps the later years a genuine out-of-sample test.
 
 | # | Idea | Result |
 |---|---|---|
 | [001](experiments/001_trailing_stop.md) | ATR trailing stop to let winners run | **Failed.** Tighter than the 50-day-MA exit; shorter holds, more fees, lower CAGR in every variant. Out-of-sample not used. |
-| [002](experiments/002_spy_trend_benchmark.md) | Benchmark: hold SPY only while it is above its 200-day MA | Beats breakout_v1 over the full period (8.6% vs 7.6% CAGR, −19.9% vs −25.8% max drawdown, 63 vs 423 trades). Stock selection is not adding value. Versus buy-and-hold the filter trades 4.6% a year of return for a shallower drawdown. |
+| [002](experiments/002_spy_trend_benchmark.md) | Benchmark: hold SPY only while it is above its 200-day MA | Beats breakout_v1 over the full period (8.6% vs 7.6% CAGR, −19.9% vs −25.8% max drawdown, 63 vs 423 trades). The full breakout rule set adds no value over the simple benchmark; which part (selection, exits or sizing) is responsible is not isolated. Versus buy-and-hold the filter trades 4.6% a year of return for a shallower drawdown. |
+| [003](experiments/003_monthly_momentum.md) | Monthly 12-1 momentum, top 10 S&P 500 stocks | **Passed the written criterion, not accepted.** Lost to both benchmarks in 2015–2021; beat them from 2022 (18.5% CAGR) but with a −50% drawdown driven by one 2026 run-up and crash, and a lower Sharpe than buy-and-hold. |
 
 ## Backtest assumptions
 

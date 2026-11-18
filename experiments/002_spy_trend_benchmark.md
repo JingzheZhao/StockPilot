@@ -45,10 +45,10 @@ Periods: 2015–2021, 2022 to date, full. Because `spy_trend` is a fixed benchma
 
 ### Findings
 
-1. **The stock-selection layer subtracts value.** Over the full period `spy_trend` earns more than breakout_v1 (8.6% vs 7.6%) with a smaller drawdown (−19.9% vs −25.8%), a much higher Sharpe ratio (0.75 vs 0.47), and one-seventh of the trades. From 2022 breakout_v1 earns 0.5% more a year but takes a 5.6-point deeper drawdown. Picking stocks, ranking them and stopping each one out added risk and fees without adding return.
+1. **breakout_v1 as a whole does not beat the simple benchmark.** Over the full period `spy_trend` earns more than breakout_v1 (8.6% vs 7.6%) with a smaller drawdown (−19.9% vs −25.8%), a much higher Sharpe ratio (0.75 vs 0.47), and one-seventh of the trades. From 2022 breakout_v1 earns 0.5% more a year but takes a 5.6-point deeper drawdown. *Correction (after external review):* an earlier version of this note said "the stock-selection layer subtracts value". That over-claims. The two strategies differ in what they hold, how they exit and how they size positions all at once, so this comparison cannot say which of those parts is responsible.
 2. **The 200-day filter is risk control, not extra return.** Against buy-and-hold, `spy_trend` gives up 4.6% a year to cut the worst drawdown from −33.7% to −19.9%. Its Sharpe ratio is slightly lower than buy-and-hold in every period, so the filter does not improve return per unit of risk; it trades return for a shallower drawdown.
 3. Caveat: cash earns nothing here. Out of the market 17% of the time, real cash in a money-market fund would have earned interest (notably 2023–2026), which would raise `spy_trend` somewhat.
 
 ### Implication
 
-Improving breakout_v1's stock-picking details (stops, sector caps) starts from a position that is already worse than the simplest version of its own idea. Any future stock-selection strategy should be required to beat `spy_trend`, not only buy-and-hold, before it is worth its extra complexity.
+Improving breakout_v1's details (stops, sector caps) starts from a position that is already worse than the simplest version of its own idea. Finding which part drags it down would need separate experiments that change one part at a time. Any future stock-selection strategy should be required to beat `spy_trend`, not only buy-and-hold, before it is worth its extra complexity.
