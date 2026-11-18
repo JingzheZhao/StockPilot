@@ -5,8 +5,7 @@
 Each run:
   1. Finds the latest completed NYSE session (holidays and early closes
      included) and downloads prices adjusted for splits only.
-  2. Checks the data: SPY must reach that session, every held or ordered stock
-     must have a price, and at least 95% of the month's index members must too.
+  2. Checks the data: SPY must reach that session, every held, ordered or eligible stock must have a price. Index coverage must also reach 95%.
   3. Restores the paper ledger (stockpilot/ledger.py) and steps the shared
      backtest Simulator through the sessions that are new since the last run.
      Recorded sessions are never recomputed; a second run on the same day
@@ -15,6 +14,7 @@ Each run:
      serves. The status is one of:
        DATA ERROR    data failed a check; no new orders are published
        ORDERS QUEUED simulated orders for the next session's open
+       ORDERS EXPIRED the scheduled opening time has passed
        NO SIGNAL     data complete, no rule fired; the report says why
 
 Universe: each month's 50 most traded S&P 500 members (point-in-time), the
@@ -38,7 +38,7 @@ from stockpilot import ledger  # noqa: E402
 from stockpilot.backtest.engine import BacktestConfig, buy_and_hold, prepare_frames  # noqa: E402
 from stockpilot.config import BENCHMARK, CURATED, SP500_HISTORY, SP500_TOP_N  # noqa: E402
 from stockpilot.data.market import download_many  # noqa: E402
-from stockpilot.marketcal import last_completed_session, next_session, sessions_between  # noqa: E402
+from stockpilot.marketcal import last_completed_session, next_session, session_open, sessions_between  # noqa: E402
 from stockpilot.strategy import STRATEGIES  # noqa: E402
 from stockpilot.strategy.indicators import sma  # noqa: E402
 from stockpilot.universe import monthly_members, top_liquid_eligibility  # noqa: E402
@@ -126,10 +126,10 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
     asof = pd.Timestamp(state["asof"])
     equity = days[-1]["equity"] if days else cfg["cash"]
     start = pd.Timestamp(cfg["start"])
-    bench = buy_and_hold(market, cfg["cash"], start, asof) if asof >= start else None
+    bench = buy_and_hold(market, cfg["cash"], start, asof) if not market.loc[start:asof].empty else None
     bret = float(bench.iloc[-1] / bench.iloc[0] - 1) if bench is not None and len(bench) else 0.0
     m = market["Close"].loc[:asof]
-    filt = bool(m.iloc[-1] > sma(m, 200).iloc[-1])
+    filt = bool(m.iloc[-1] > sma(m, 200).iloc[-1]) if not m.empty else None
     nxt = next_session(asof)
     last = days[-1] if days else None
     risk = risk_summary(state, equity)
@@ -141,7 +141,7 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
     L.append(f"- Data: recorded through {asof.date()}; latest completed NYSE session {expected.date()}")
     L.append(f"- Account (simulated money): **${equity:,.2f}** ({equity / cfg['cash'] - 1:+.2%} since "
              f"{cfg['start']}); SPY buy-and-hold over the same period {bret:+.2%}")
-    L.append("- Market filter: " + ("ON, SPY above its 200-day MA, new buys allowed" if filt
+    L.append("- Market filter: unavailable" if filt is None else "- Market filter: " + ("ON, SPY above its 200-day MA, new buys allowed" if filt
                                    else "OFF, SPY below its 200-day MA, no new buys"))
     L.append(f"- Universe: {UNIVERSE_LABEL[cfg['universe']]}")
     if universe_now:
@@ -154,10 +154,10 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
         L.append("")
 
     L.append(f"## Orders for the open of {nxt.date()} (valid for that open only)")
-    orders = last["new_orders"] if last else []
-    exits = state["pending_exits"]
-    if status == "DATA ERROR":
-        L.append("None published: data for the latest session failed the checks above.")
+    orders = last["new_orders"] if last and status == "ORDERS QUEUED" else []
+    exits = state["pending_exits"] if status == "ORDERS QUEUED" else {}
+    if status in {"DATA ERROR", "ORDERS EXPIRED"}:
+        L.append("No active orders published.")
     elif not orders and not exits:
         L.append("None.")
     for sym, reason in exits.items():
@@ -234,12 +234,12 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
         "status": status, "status_detail": why, "data_problems": problems,
         "asof": str(asof.date()), "latest_completed_session": str(expected.date()),
         "orders_valid_for_open_of": str(nxt.date()),
+        "orders_expire_at": session_open(nxt).isoformat(),
         "start": cfg["start"], "strategy": cfg["strategy"], "universe": UNIVERSE_LABEL[cfg["universe"]],
         "buyable_this_month": universe_now, "initial_cash": cfg["cash"],
         "equity": round(equity, 2), "return_pct": round(equity / cfg["cash"] - 1, 4),
         "spy_return_pct": round(bret, 4), "market_filter_on": filt,
-        "next_open_orders": ([] if status == "DATA ERROR" else
-                             [{"side": "SELL", "symbol": s, "reason": REASON.get(r, r)} for s, r in exits.items()]
+        "next_open_orders": ([{"side": "SELL", "symbol": s, "reason": REASON.get(r, r)} for s, r in exits.items()]
                              + [{"side": "BUY", "symbol": o["symbol"], "shares": round(o["shares"], 4),
                                  "approx_value": round(o["shares"] * o["signal_close"], 2), "rank": o["rank"],
                                  "candidates": o["candidates"], "sized_by": o["sized_by"],
@@ -260,18 +260,16 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
     return report, snap
 
 
-def append_orders_log(records: list[dict]) -> None:
-    """Append-only log of every order announced; recorded days are never rewritten."""
+def write_orders_log(records: list[dict]) -> None:
+    """Rebuild the order export from committed daily records."""
     rows = []
     for r in records:
         rows += [{"asof": r["date"], "side": "SELL", "symbol": s, "shares": None, "reason": w}
                  for s, w in r["new_exits"].items()]
         rows += [{"asof": r["date"], "side": "BUY", "symbol": o["symbol"], "shares": round(o["shares"], 4),
                   "reason": f"rank {o['rank']} of {o['candidates']}"} for o in r["new_orders"]]
-    if not rows:
-        return
-    path = PAPER / "orders_log.csv"
-    pd.DataFrame(rows).to_csv(path, mode="a", header=not path.exists(), index=False)
+    columns = ["asof", "side", "symbol", "shares", "reason"]
+    ledger.atomic_write(PAPER / "orders_log.csv", pd.DataFrame(rows, columns=columns).to_csv(index=False))
 
 
 # ---------- main ----------
@@ -293,61 +291,86 @@ def main() -> None:
         (PAPER / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     since = (min(expected, pd.Timestamp(cfg["start"])) - pd.Timedelta(days=HISTORY_DAYS)).strftime("%Y-%m-%d")
 
-    data, members = load_market(cfg, since)
-    data = {s: d[d.index <= expected] for s, d in data.items()}  # never use a still-forming bar
     problems: list[str] = []
-    if BENCHMARK not in data or data[BENCHMARK].empty:
-        sys.exit("SPY download failed; nothing recorded today.")
-    market = data.pop(BENCHMARK)
-    if market.index[-1] < expected:
+    try:
+        data, members = load_market(cfg, since)
+    except Exception:
+        logging.exception("Could not load market data")
+        data, members = {}, None
+        problems.append("Market data could not be loaded.")
+    data = {s: d[d.index <= expected] for s, d in data.items()}  # never use a still-forming bar
+    market = data.pop(BENCHMARK, pd.DataFrame(columns=["Close"], index=pd.DatetimeIndex([])))
+    if market.empty:
+        problems.append("SPY has no usable bars.")
+    elif market.index[-1] < expected:
         problems.append(f"SPY data ends {market.index[-1].date()}, but the latest completed session is "
                         f"{expected.date()} (data provider late?)")
 
-    universe_now: list[str] = []
-    if members:
+    elig = pd.DataFrame()
+    if members and not market.empty:
         elig = top_liquid_eligibility(data, members, market.index, top_n=SP500_TOP_N)
         for s in list(data):
             data[s] = data[s].assign(Eligible=elig[s].reindex(data[s].index).fillna(False))
-        today = elig.iloc[-1]
-        universe_now = sorted(today[today].index)
-    frames = prepare_frames(data, STRATEGIES[cfg["strategy"]](), market)
+    frames = prepare_frames(data, STRATEGIES[cfg["strategy"]](), market) if not market.empty else {}
+
+    def eligible_on(day):
+        if cfg["universe"] == "curated":
+            return set(CURATED)
+        return set(elig.columns[elig.loc[day]]) if day in elig.index else set()
+
 
     state = ledger.load_state(LEDGER)
     if state is None:  # new ledger: start the day before the first session
         first = pd.Timestamp(cfg["start"])
         state = ledger.new_state(first - pd.Timedelta(days=1), cfg["cash"])
-    todo = sessions_between(state["asof"], min(expected, market.index[-1]))
+    todo = sessions_between(state["asof"], min(expected, market.index[-1])) if not market.empty else []
     missing = [d for d in todo if d not in market.index]
     if missing:
         problems.append(f"SPY has no bar for session(s) {', '.join(str(d.date()) for d in missing)}")
         todo = [d for d in todo if d < missing[0]]
 
+    for day in todo or ([expected] if expected in market.index else []):
+        eligible = eligible_on(day)
+        ranked = len(eligible)
+        missing = sorted(s for s in eligible if s not in frames or day not in frames[s].index)
+        if cfg["universe"] == "sp500" and ranked < SP500_TOP_N:
+            problems.append(f"{day.date()}: only {ranked}/{SP500_TOP_N} candidates could be ranked.")
+        elif missing:
+            problems.append(f"{day.date()}: {ranked - len(missing)}/{ranked} candidates have quotes. "
+                            f"Missing: {', '.join(missing)}.")
+        else:
+            continue
+        todo = [d for d in todo if d < day]
+        break
+
     bt_cfg = BacktestConfig(initial_cash=cfg["cash"])
-    state, records, bad = ledger.advance(state, frames, bt_cfg, todo, lambda d: members_on(members, d))
+    state, records, bad = ledger.advance(state, frames, bt_cfg, todo, lambda d: members_on(members, d), eligible_on)
     problems += bad
     for r in records:
         ledger.save_day(LEDGER, r)
-    if records:
-        ledger.save_state(LEDGER, state)
-        append_orders_log(records)
-
     days = ledger.load_days(LEDGER)
+    write_orders_log(days)
     asof = pd.Timestamp(state["asof"])
     if problems:
         status, why = "DATA ERROR", "Some data failed the checks, so the ledger stopped at the last good session."
     elif state["pending_entries"] or state["pending_exits"]:
-        status, why = "ORDERS QUEUED", f"Simulated orders are queued for the open of {next_session(asof).date()}."
+        target = next_session(asof)
+        if pd.Timestamp.now(tz="UTC") >= session_open(target):
+            status, why = "ORDERS EXPIRED", f"The opening time for {target.date()} has passed."
+        else:
+            status, why = "ORDERS QUEUED", f"Simulated orders are queued for the open of {target.date()}."
     else:
         status, why = "NO SIGNAL", "Data is complete and no buy or sell rule fired."
     held = {p["symbol"] for p in state["positions"]}
     diag = diagnostics(frames, data, asof, held) if asof in market.index else {
         "buyable": 0, "evaluated": 0, "above_50d_ma": 0, "new_20d_high": 0, "both": [], "closest": []}
+    universe_now = sorted(eligible_on(asof)) if members else []
     report, snap = build_report(status, why, state, days, cfg, expected, market, diag, problems, universe_now)
 
-    (PAPER / "reports" / f"{asof.date()}.md").write_text(report, encoding="utf-8")
+    ledger.atomic_write(PAPER / "reports" / f"{expected.date()}.md", report)
     out = ROOT / "muse" / "data" / "latest.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(snap, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    ledger.atomic_write(out, json.dumps(snap, ensure_ascii=False, indent=2, default=str))
     print(report)
 
 

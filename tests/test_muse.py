@@ -16,6 +16,7 @@ SNAP = {
     "equity": 3012.5, "return_pct": 0.0042, "spy_return_pct": 0.002, "market_filter_on": True,
     "fees_paid": 2.0, "universe": "S&P 500 top 50", "buyable_this_month": ["AAPL", "NVDA"],
     "status": "ORDERS QUEUED", "orders_valid_for_open_of": "2026-11-18",
+    "orders_expire_at": "2099-11-18T14:30:00+00:00",
     "next_open_orders": [{"side": "BUY", "symbol": "KO", "shares": 6.0, "approx_value": 600.0}],
     "positions": [{"symbol": "PG", "shares": 3.4, "entry_date": "2026-11-17", "entry_price": 173.0,
                    "last_close": 175.0, "pnl_pct": 0.0116, "stop": 166.1}],
@@ -104,3 +105,19 @@ def test_unknown_tool_and_method(server):
     assert r["error"]["code"] == -32602
     _, r = call(url, 2, "resources/list")
     assert r["error"]["code"] == -32601
+
+
+
+@pytest.mark.parametrize("cutoff", ["2000-01-01T14:30:00+00:00", None])
+def test_expired_orders_hidden_in_all_muse_views(server, cutoff):
+    _, mod = server
+    markdown = ("**Status: ORDERS QUEUED**. Queued.\n\n"
+                "## Orders for the open of 2026-11-18\n- **BUY KO**\n\n## Open positions\n")
+    mod.DATA.write_text(json.dumps({**SNAP, "orders_expire_at": cutoff, "report_markdown": markdown}),
+                        encoding="utf-8")
+    assert mod.call_tool("get_summary", {})["status"] == "ORDERS EXPIRED"
+    assert mod.call_tool("get_next_orders", {})["orders_for_next_open"] == []
+    report = mod.call_tool("get_daily_report", {})["report_markdown"]
+    assert "BUY KO" not in report
+    assert "ORDERS EXPIRED" in report
+    assert "## Open positions" in report

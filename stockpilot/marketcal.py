@@ -38,7 +38,13 @@ def last_completed_session(now=None) -> pd.Timestamp:
 
 
 def next_session(day) -> pd.Timestamp:
-    return _naive(_calendar().next_session(_naive(day).normalize()))
+    cal = _calendar()
+    day = _naive(day).normalize()
+    return _naive(cal.date_to_session(day + pd.Timedelta(days=1), direction="next"))
+
+
+def session_open(day) -> pd.Timestamp:
+    return _calendar().session_open(day)
 
 
 def sessions_between(after, through) -> list[pd.Timestamp]:

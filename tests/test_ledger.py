@@ -104,3 +104,58 @@ def test_state_roundtrip_on_disk(tmp_path, world):
                           list(market.index[400:600]), no_members)
     save_state(tmp_path, state)
     assert load_state(tmp_path) == roundtrip(state)
+
+
+
+def test_resume_after_first_daily_record_without_updating_legacy_checkpoint(tmp_path, world):
+    _, market, frames = world
+    cfg = BacktestConfig()
+    initial = new_state(market.index[399], cfg.initial_cash)
+    save_state(tmp_path, initial)
+    days = list(market.index[400:402])
+    expected, records, _ = advance(initial, frames, cfg, days, no_members)
+    save_day(tmp_path, records[0])
+    recovered = load_state(tmp_path)
+    assert recovered["asof"] == str(days[0].date())
+    final, remaining, problems = advance(recovered, frames, cfg, days[1:], no_members)
+    assert not problems
+    assert final == expected
+    save_day(tmp_path, remaining[0])
+    assert load_state(tmp_path) == expected
+
+
+def test_missing_eligible_quote_blocks_session_even_with_good_index_coverage(world):
+    _, market, frames = world
+    day = market.index[400]
+    initial = new_state(market.index[399], 3000.0)
+    state, records, issues = advance(initial, frames, BacktestConfig(), [day], no_members, lambda _: {"MISSING"})
+    assert not records
+    assert state == initial
+    assert "missing candidate quotes: MISSING" in issues[0]
+
+
+
+def test_paper_run_replaces_stale_snapshot_when_spy_is_missing(tmp_path, monkeypatch):
+    import sys
+    from scripts import paper
+
+    paper_dir = tmp_path / "paper"
+    paper_dir.mkdir()
+    monkeypatch.setattr(paper, "PAPER", paper_dir)
+    monkeypatch.setattr(paper, "LEDGER", paper_dir / "ledger")
+    monkeypatch.setattr(paper, "ROOT", tmp_path)
+    monkeypatch.setattr(paper, "last_completed_session", lambda: pd.Timestamp("2026-11-16"))
+    monkeypatch.setattr(paper, "load_market", lambda *_: ({}, None))
+    monkeypatch.setattr(sys, "argv", ["paper.py"])
+    snapshot = tmp_path / "muse" / "data" / "latest.json"
+    snapshot.parent.mkdir(parents=True)
+    snapshot.write_text('{"status":"ORDERS QUEUED","next_open_orders":[{"symbol":"KO"}]}', encoding="utf-8")
+
+    paper.main()
+
+    updated = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert updated["status"] == "DATA ERROR"
+    assert updated["next_open_orders"] == []
+    assert "SPY has no usable bars" in updated["report_markdown"]
+    assert (paper_dir / "reports" / "2026-11-16.md").exists()
+    assert load_state(paper_dir / "ledger") is None

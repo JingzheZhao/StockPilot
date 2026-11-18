@@ -3,9 +3,8 @@
 The paper account is no longer recomputed from its start date every day.
 Instead it keeps:
 
-  paper/ledger/state.json        account state after the last recorded session
-  paper/ledger/days/<date>.json  one immutable record per session: data checks,
-                                 fills, skipped orders, new orders, equity
+  paper/ledger/state.json        legacy checkpoint, read only during migration
+  paper/ledger/days/<date>.json  immutable fills, orders, equity and end-of-day state
 
 Each run restores the state and steps the shared Simulator through the
 sessions that are new since then. Sessions already recorded are never
@@ -22,6 +21,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 import pandas as pd
 
@@ -61,6 +61,11 @@ def new_state(start_after: pd.Timestamp, cash: float) -> dict:
 
 
 def load_state(ledger_dir: Path) -> dict | None:
+    days = sorted((ledger_dir / "days").glob("*.json"))
+    if days:
+        record = json.loads(days[-1].read_text(encoding="utf-8"))
+        if "state" in record:
+            return record["state"]
     path = ledger_dir / "state.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
@@ -70,13 +75,25 @@ def save_state(ledger_dir: Path, state: dict) -> None:
     (ledger_dir / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
+def atomic_write(path: Path, content: str) -> None:
+    with NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=path.parent,
+                            prefix=f".{path.name}.", delete=False) as tmp:
+        temp_path = Path(tmp.name)
+        try:
+            tmp.write(content)
+            tmp.close()
+            temp_path.replace(path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+
+
 def save_day(ledger_dir: Path, record: dict) -> None:
     days = ledger_dir / "days"
     days.mkdir(parents=True, exist_ok=True)
     path = days / f"{record['date']}.json"
     if path.exists():  # immutable: a recorded session is never rewritten
         raise FileExistsError(f"Session {record['date']} is already recorded")
-    path.write_text(json.dumps(_jsonable(record), indent=2), encoding="utf-8")
+    atomic_write(path, json.dumps(_jsonable(record), indent=2))
 
 
 def load_days(ledger_dir: Path) -> list[dict]:
@@ -157,7 +174,7 @@ def apply_corporate_actions(state: dict, frames: dict) -> list[dict]:
 # ---------- advance ----------
 
 def advance(state: dict, frames: dict, cfg: BacktestConfig, sessions: list[pd.Timestamp],
-            members_for) -> tuple[dict, list[dict], list[str]]:
+            members_for, eligible_for=lambda day: set()) -> tuple[dict, list[dict], list[str]]:
     """Step through new sessions, stopping at the first one with bad data.
 
     Returns (state after the last recorded session, records of the recorded
@@ -165,17 +182,24 @@ def advance(state: dict, frames: dict, cfg: BacktestConfig, sessions: list[pd.Ti
     the coverage check, or None to skip it. The input state is not modified.
     """
     state = json.loads(json.dumps(state))  # work on a copy
+    if not sessions:
+        return state, [], []
     events = apply_corporate_actions(state, frames)
     sim = restore(state, frames, cfg)
     records, problems = [], []
     for day in sessions:
         must = set(sim.positions) | set(sim.pending_exits) | {o.symbol for o in sim.pending_entries}
         found = check_session(day, frames, must, members_for(day))
+        missing_candidates = sorted(s for s in eligible_for(day)
+                                    if s not in frames or day not in frames[s].index)
+        if missing_candidates:
+            found.append(f"missing candidate quotes: {', '.join(missing_candidates)}")
         if found:
             problems = [f"{day.date()}: {p}" for p in found]
             break
         log = _jsonable(sim.step(day))  # dates as "YYYY-MM-DD", ready to save
         log["corporate_actions"] = [] if records else events
+        log["state"] = snapshot_state(sim, day)
         records.append(log)
-    final = snapshot_state(sim, records[-1]["date"]) if records else state
+    final = records[-1]["state"] if records else state
     return final, records, problems

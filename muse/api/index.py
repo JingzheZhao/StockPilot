@@ -24,6 +24,8 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
@@ -84,6 +86,18 @@ def load() -> dict:
 
 def call_tool(name: str, args: dict) -> dict:
     d = load()
+    orders = d["next_open_orders"]
+    cutoff = d.get("orders_expire_at")
+    expired = bool(orders) and (not cutoff or datetime.now(timezone.utc) >= datetime.fromisoformat(cutoff))
+    if expired:
+        d["status"] = "ORDERS EXPIRED"
+        d["status_detail"] = "The scheduled opening time has passed or could not be verified."
+        d["next_open_orders"] = []
+        section = r"(?m)^## Orders for [^\n]+\n(?:[\s\S]*?)(?=^## |\Z)"
+        d["report_markdown"] = re.sub(section, "## Orders\nNo active orders.\n\n", d["report_markdown"])
+        d["report_markdown"] = re.sub(r"(?m)^\*\*Status: ORDERS QUEUED\*\*[^\n]*",
+                                      "**Status: ORDERS EXPIRED**. " + d["status_detail"],
+                                      d["report_markdown"])
     if name == "get_summary":
         return {k: d.get(k) for k in ("status", "status_detail", "data_problems", "asof",
                                       "latest_completed_session", "orders_valid_for_open_of", "start",
