@@ -1,0 +1,34 @@
+{
+  "asof": "2026-11-16",
+  "start": "2026-11-16",
+  "strategy": "breakout",
+  "initial_cash": 3000.0,
+  "equity": 3000.0,
+  "return_pct": 0.0,
+  "spy_return_pct": 0.0,
+  "market_filter_on": true,
+  "next_open_orders": [
+    {
+      "side": "BUY",
+      "symbol": "PG",
+      "shares": 3.4678,
+      "approx_value": 600.0
+    },
+    {
+      "side": "BUY",
+      "symbol": "COST",
+      "shares": 0.5387,
+      "approx_value": 600.0
+    },
+    {
+      "side": "BUY",
+      "symbol": "KO",
+      "shares": 6.0314,
+      "approx_value": 600.0
+    }
+  ],
+  "positions": [],
+  "closed_trades": [],
+  "fees_paid": 0.0,
+  "report_markdown": "# Paper trading report 2026-11-16\n\n- Started: 2026-11-16 with $3,000 (simulated money, not real)\n- Account value: **$3,000.00** (+0.00%)\n- SPY buy-and-hold over the same period: +0.00%\n- Market filter: ON (SPY above its 200-day MA, new buys allowed)\n\n## Orders for the next open\n- **BUY PG** 3.4678 shares, about $600 (last close $173.02; stop about $166.13, set from the actual fill price)\n- **BUY COST** 0.5387 shares, about $600 (last close $1113.74; stop about $1070.96, set from the actual fill price)\n- **BUY KO** 6.0314 shares, about $600 (last close $99.48; stop about $95.80, set from the actual fill price)\n\n## Open positions\nNone.\n\n## Closed trades\nNone yet.\n"
+}
