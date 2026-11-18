@@ -51,4 +51,8 @@ Periods: 2015–2021, 2022 to date, full. Because `spy_trend` is a fixed benchma
 
 ### Implication
 
+### Correction (2026-11-17): end-of-test accounting
+
+The backtest engine used to book the costs of the forced final exit in the trade list but not in the last equity point. After fixing that, breakout_v1's max drawdown on `sp500` reads −26.2% (2022–) and −25.9% (full) instead of −26.1% and −25.8%. CAGR and every conclusion are unchanged.
+
 Improving breakout_v1's details (stops, sector caps) starts from a position that is already worse than the simplest version of its own idea. Finding which part drags it down would need separate experiments that change one part at a time. Any future stock-selection strategy should be required to beat `spy_trend`, not only buy-and-hold, before it is worth its extra complexity.

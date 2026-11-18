@@ -23,7 +23,12 @@ class Breakout(Strategy):
         ma = sma(c, self.trend_ma)
         hh = prior_high(c, self.breakout_days)
         out = pd.DataFrame(index=df.index)
-        out["entry"] = self.market_ok(df, market) & (c > ma) & (c > hh)
+        # Each entry condition on its own, so reports can explain "no signal".
+        out["c_market"] = self.market_ok(df, market)
+        out["c_trend"] = c > ma
+        out["c_high"] = c > hh
+        out["prior_high"] = hh
+        out["entry"] = out["c_market"] & out["c_trend"] & out["c_high"]
         out["exit"] = (c < ma) if self.ma_exit else False
         out["atr"] = atr(df, self.atr_days)
         out["score"] = momentum(c, 60)

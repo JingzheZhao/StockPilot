@@ -11,7 +11,7 @@ A rule-based US stock trading research system: a backtest engine built to avoid 
 | Finding | Evidence |
 |---|---|
 | **A hand-picked stock list inflated returns by about 4.5% a year.** | The same breakout rules earned 12.1% a year on 37 stocks chosen in 2026, but 7.6% on a point-in-time S&P 500 universe rebuilt from Wikipedia page history. |
-| **The breakout strategy loses to the simplest version of its own idea.** | Holding SPY only while it is above its 200-day moving average earned 8.6% a year with a −19.9% worst drawdown, against breakout's 7.6% and −25.8%, using one-seventh of the trades. ([002](experiments/002_spy_trend_benchmark.md)) |
+| **The breakout strategy loses to the simplest version of its own idea.** | Holding SPY only while it is above its 200-day moving average earned 8.6% a year with a −19.9% worst drawdown, against breakout's 7.6% and −25.9%, using one-seventh of the trades. ([002](experiments/002_spy_trend_benchmark.md)) |
 | **Buy-and-hold had the highest return.** | SPY buy-and-hold: 13.2% a year, −33.7% worst drawdown, over 2015-01 to 2026-11. |
 | **A trailing stop made things worse.** | ATR trailing stops were tighter than the existing exit; every variant held winners for less time, paid more fees and earned less. ([001](experiments/001_trailing_stop.md)) |
 | **Monthly momentum passed on paper but was not accepted.** | It beat both benchmarks from 2022 (18.5% a year) but lost to them in 2015–2021, fell 50% from a 2026 peak, and had a lower Sharpe ratio than buy-and-hold. ([003](experiments/003_monthly_momentum.md)) |
@@ -33,7 +33,9 @@ flowchart LR
     V -->|API key| M[Meta Muse on phone]
 ```
 
-- **One code path.** Paper trading replays the backtest engine from its start date every day with positions left open. The orders it announces for the next open come from exactly the code that produced the backtests.
+- **One code path.** Backtests and paper trading drive the same `Simulator`, one session at a time. A test steps the paper ledger in chunks, saving and reloading it in between, and checks the result equals one continuous backtest.
+- **Append-only paper ledger.** Each run restores the saved account state and steps only the sessions that are new; each session gets an immutable record in `paper/ledger/days/`. Later data revisions cannot rewrite history, and a second run on the same day changes no file (verified by file hashes).
+- **Checked data, explicit status.** A run first finds the latest completed NYSE session (holidays and early closes included), then requires SPY to reach it, every held or ordered stock to have a price, and 95% of the month's index members to be priced. The report and Muse show one of three states: `DATA ERROR` (nothing new published), `ORDERS QUEUED` (with the session they are valid for, rank, sizing reason and planned stop), or `NO SIGNAL` (with how many stocks met each rule and which were closest).
 - **Read-only connector.** The MCP server on Vercel can only read the latest snapshot. It has no tool that places orders or changes anything, and it rejects requests without the API key.
 
 ## Methodology
@@ -51,7 +53,7 @@ flowchart LR
 | Universe | How stocks are chosen | CAGR | Max drawdown | Trades | Fees |
 |---|---|---|---|---|---|
 | `curated` | 37 large caps and ETFs picked by hand in 2026 (hindsight) | 12.1% | −24.5% | 384 | $791 |
-| `sp500` | Monthly top 50 by dollar volume among that month's S&P 500 members | 7.6% | −25.8% | 423 | $849 |
+| `sp500` | Monthly top 50 by dollar volume among that month's S&P 500 members | 7.6% | −25.9% | 423 | $849 |
 | `etf` | 11 SPDR sector ETFs plus QQQ, IWM, DIA | 1.2% | −27.6% | 396 | $792 |
 | SPY buy-and-hold | | 13.2% | −33.7% | 1 | $1 |
 
@@ -90,8 +92,10 @@ scripts/
   build_sp500_history.py rebuild the membership file
 experiments/             plans, runners and results for each experiment
 muse/                    read-only MCP server for Vercel
-paper/                   paper account: config, daily reports, order log
-tests/                   32 tests, including look-ahead checks
+  ledger.py              append-only paper ledger: restore, data checks, step new sessions
+  marketcal.py           NYSE sessions, holidays, early closes
+paper/                   paper account: config, ledger, daily reports, order log
+tests/                   40 tests, including look-ahead and ledger-replay checks
 ```
 
 ## Quick start
@@ -109,13 +113,13 @@ python experiments/run_002_spy_trend.py        # reproduce an experiment
 
 ## Cloud setup
 
-- `.github/workflows/daily.yml` runs `scripts/paper.py` early each weekday morning (New York time, before the open) and commits the report, the order log, the Muse snapshot and any new membership snapshot.
+- `.github/workflows/daily.yml` runs `scripts/paper.py` early each weekday morning (New York time, before the open) and commits the ledger, the report, the order log, the Muse snapshot and any new membership snapshot. Prices for paper trading are adjusted for splits only, so recorded fills stay comparable from day to day; dividends are not credited.
 - `.github/workflows/tests.yml` runs the test suite on every code change.
 - `muse/` deploys to Vercel with `muse` as the root directory. Set `MUSE_API_KEY` (at least 20 characters) as an environment variable; the server rejects everything if it is missing. Every commit triggers a redeploy, so Muse reads the latest snapshot.
 
 ## Known limitations
 
-- **Delisted stocks are missing.** About 8% of S&P 500 member-months have no price data, mostly companies that were later delisted or acquired. Results on `sp500` are therefore somewhat optimistic.
+- **Delisted stocks are missing.** 10.1% of S&P 500 member-months have no price inside that month, mostly companies that were later delisted or acquired. Results on `sp500` are therefore somewhat optimistic. (An earlier version said 8.2%; it counted a stock as covered if it had prices for any period, not for the month in question.)
 - **2022 onward has been looked at.** Experiments 002 and 003 used it, so any idea developed from here can only be validated on new data, through paper trading.
 - **Free data.** yfinance is unofficial and Wikipedia's membership history can lag real index changes by days.
 - **No interest on cash** in any backtest, which understates strategies that spend time out of the market.

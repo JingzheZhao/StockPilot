@@ -1,25 +1,24 @@
 """Daily paper trading (simulated money, no broker).
 
-Run once per trading day after the US close:
     python scripts/paper.py
 
-How it works
-------------
-The first run records a start date and starting cash in paper/config.json.
-Every run downloads fresh prices and replays the SAME backtest engine from that
-start date to the latest completed trading day, with positions left open. The
-engine's no-look-ahead rule (tested in tests/test_engine.py) means replaying
-gives the same history every day plus the newest day, so paper results and
-backtest results come from one piece of code.
+Each run:
+  1. Finds the latest completed NYSE session (holidays and early closes
+     included) and downloads prices adjusted for splits only.
+  2. Checks the data: SPY must reach that session, every held or ordered stock
+     must have a price, and at least 95% of the month's index members must too.
+  3. Restores the paper ledger (stockpilot/ledger.py) and steps the shared
+     backtest Simulator through the sessions that are new since the last run.
+     Recorded sessions are never recomputed; a second run on the same day
+     changes nothing.
+  4. Writes a status report, an order log and the snapshot the Muse connector
+     serves. The status is one of:
+       DATA ERROR    data failed a check; no new orders are published
+       ORDERS QUEUED simulated orders for the next session's open
+       NO SIGNAL     data complete, no rule fired; the report says why
 
-Universe: by default each month's 50 most traded S&P 500 members, chosen with
-the same point-in-time rule as `scripts/backtest.py --universe sp500`, so paper
-results can be compared with that backtest. The membership file is extended
-with the new month's snapshot at the start of each run (one Wikipedia request
-per new month); if that fails, the latest saved snapshot is used.
-
-Output: a report in paper/reports/<date>.md, and every order the agent
-announced is appended to paper/orders_log.csv so it can be audited later.
+Universe: each month's 50 most traded S&P 500 members (point-in-time), the
+same rule as `scripts/backtest.py --universe sp500`.
 """
 
 from __future__ import annotations
@@ -28,38 +27,39 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from stockpilot.backtest.engine import BacktestConfig, buy_and_hold, run_backtest  # noqa: E402
+from stockpilot import ledger  # noqa: E402
+from stockpilot.backtest.engine import BacktestConfig, buy_and_hold, prepare_frames  # noqa: E402
 from stockpilot.config import BENCHMARK, CURATED, SP500_HISTORY, SP500_TOP_N  # noqa: E402
 from stockpilot.data.market import download_many  # noqa: E402
+from stockpilot.marketcal import last_completed_session, next_session, sessions_between  # noqa: E402
 from stockpilot.strategy import STRATEGIES  # noqa: E402
 from stockpilot.strategy.indicators import sma  # noqa: E402
 from stockpilot.universe import monthly_members, top_liquid_eligibility  # noqa: E402
 
+PAPER = ROOT / "paper"
+LEDGER = PAPER / "ledger"
+HISTORY_DAYS = 600  # enough for the 200-day market filter and 60-day momentum
+REASON = {"signal": "closed below 50-day MA", "stop": "stop-loss hit", "end_of_test": "end of test"}
 UNIVERSE_LABEL = {
     "sp500": f"S&P 500 members, top {SP500_TOP_N} by 60-day dollar volume, refreshed monthly",
     "curated": "fixed list of 37 large caps and ETFs",
 }
 
-PAPER = ROOT / "paper"
-NY = ZoneInfo("America/New_York")
-HISTORY_DAYS = 600  # enough for the 200-day market filter and 60-day momentum
-REASON = {"signal": "closed below 50-day MA", "stop": "stop-loss hit"}
 
+# ---------- inputs ----------
 
 def load_config(cash: float, strategy: str, universe: str) -> dict:
     path = PAPER / "config.json"
     if path.exists():
         cfg = json.loads(path.read_text(encoding="utf-8"))
-        cfg.setdefault("universe", "curated")  # accounts started before universes existed
+        cfg.setdefault("universe", "curated")
         return cfg
     return {"start": None, "cash": cash, "strategy": strategy, "universe": universe}
 
@@ -71,199 +71,283 @@ def update_membership() -> pd.DataFrame:
     path = ROOT / SP500_HISTORY
     try:
         build_history("2014-01-01", None, path)
-    except Exception as exc:  # Wikipedia down or rate-limited: keep last month's list
+    except Exception as exc:  # Wikipedia down or rate-limited: keep the saved snapshots
         logging.warning("Could not update S&P 500 membership (%s); using saved snapshots", exc)
     return load_history(path)
 
 
 def load_market(cfg: dict, since: str):
-    """Prices for the paper universe; adds an Eligible column for sp500."""
     if cfg["universe"] == "curated":
-        data = download_many([BENCHMARK, *CURATED], since)
-        return data, None
-    history = update_membership()
-    members = monthly_members(history)
-    # Everyone who was a member in any snapshot since the price window began:
-    # needed both to rank this month and to keep pricing stocks we still hold.
+        return download_many([BENCHMARK, *CURATED], since, auto_adjust=False), None
+    members = monthly_members(update_membership())
     recent = {s for m, syms in members.items() if m >= pd.Timestamp(since) for s in syms}
-    data = download_many([BENCHMARK, *sorted(recent)], since)
-    return data, members
+    return download_many([BENCHMARK, *sorted(recent)], since, auto_adjust=False), members
 
 
-def attach_eligibility(data: dict, members: dict, calendar: pd.DatetimeIndex) -> list[str]:
-    elig = top_liquid_eligibility(data, members, calendar, top_n=SP500_TOP_N)
-    for s in list(data):
-        data[s] = data[s].assign(Eligible=elig[s].reindex(data[s].index).fillna(False))
-    today = elig.iloc[-1]
-    return sorted(today[today].index)
+def members_on(members: dict | None, day: pd.Timestamp) -> set[str] | None:
+    if not members:
+        return None
+    keys = [m for m in members if m <= day]
+    return members[max(keys)] if keys else None
 
 
-def drop_incomplete_today(data: dict[str, pd.DataFrame]) -> None:
-    """Before 16:30 New York time, today's bar is still moving; ignore it."""
-    now = datetime.now(NY)
-    today = pd.Timestamp(now.date())
-    if now.hour * 60 + now.minute >= 16 * 60 + 30:
-        return
-    for sym, df in data.items():
-        data[sym] = df[df.index < today]
+# ---------- report ----------
+
+def diagnostics(frames: dict, data: dict, asof: pd.Timestamp, held: set[str]) -> dict:
+    """Why there is (or is not) a buy signal on `asof`."""
+    elig = [s for s, d in data.items() if "Eligible" in d and asof in d.index and bool(d.loc[asof, "Eligible"])]
+    if not elig:  # curated universe: everything is buyable
+        elig = [s for s in frames if asof in frames[s].index]
+    rows = [(s, frames[s].loc[asof]) for s in elig if s in frames and asof in frames[s].index and s not in held]
+    trend = [s for s, b in rows if bool(b["c_trend"])]
+    high = [s for s, b in rows if bool(b["c_high"])]
+    both = [s for s, b in rows if bool(b["c_trend"]) and bool(b["c_high"])]
+    near = sorted(((s, float(b["prior_high"]) / float(b["Close"]) - 1) for s, b in rows
+                   if bool(b["c_trend"]) and not bool(b["c_high"]) and b["prior_high"] == b["prior_high"]),
+                  key=lambda x: x[1])[:3]
+    return {"buyable": len(elig), "evaluated": len(rows), "above_50d_ma": len(trend),
+            "new_20d_high": len(high), "both": both, "closest": near}
 
 
-def build_report(res, bench: pd.Series, market: pd.DataFrame, cfg: dict,
-                 universe_now: list[str] | None) -> str:
-    asof = res.equity.index[-1].date()
-    eq = res.equity.iloc[-1]
-    ret = eq / cfg["cash"] - 1
-    bret = bench.iloc[-1] / bench.iloc[0] - 1
-    m = market["Close"]
-    filt = m.iloc[-1] > sma(m, 200).iloc[-1]
+def risk_summary(state: dict, equity: float) -> dict:
+    pos = state["positions"]
+    values = {p["symbol"]: p["shares"] * state["last_close"][p["symbol"]] for p in pos}
+    to_stops = sum(max(state["last_close"][p["symbol"]] - p["stop"], 0) * p["shares"] for p in pos)
+    return {
+        "cash_pct": state["cash"] / equity if equity else 1.0,
+        "invested_pct": sum(values.values()) / equity if equity else 0.0,
+        "largest": max(values.items(), key=lambda kv: kv[1]) if values else None,
+        "loss_if_all_stops_hit_pct": to_stops / equity if equity else 0.0,
+    }
 
-    L = [f"# Paper trading report {asof}", ""]
-    L.append(f"- Started: {cfg['start']} with ${cfg['cash']:,.0f} (simulated money, not real)")
-    L.append(f"- Account value: **${eq:,.2f}** ({ret:+.2%})")
-    L.append(f"- SPY buy-and-hold over the same period: {bret:+.2%}")
-    L.append("- Market filter: " + ("ON (SPY above its 200-day MA, new buys allowed)" if filt
-                                   else "OFF (SPY below its 200-day MA, no new buys)"))
+
+def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict, expected: pd.Timestamp,
+                 market: pd.DataFrame, diag: dict, problems: list[str], universe_now: list[str]) -> tuple[str, dict]:
+    asof = pd.Timestamp(state["asof"])
+    equity = days[-1]["equity"] if days else cfg["cash"]
+    start = pd.Timestamp(cfg["start"])
+    bench = buy_and_hold(market, cfg["cash"], start, asof) if asof >= start else None
+    bret = float(bench.iloc[-1] / bench.iloc[0] - 1) if bench is not None and len(bench) else 0.0
+    m = market["Close"].loc[:asof]
+    filt = bool(m.iloc[-1] > sma(m, 200).iloc[-1])
+    nxt = next_session(asof)
+    last = days[-1] if days else None
+    risk = risk_summary(state, equity)
+    trades = [t for d in days for t in d["sells"]]
+
+    L = [f"# Paper trading report {asof.date()}", ""]
+    L.append(f"**Status: {status}**. {why}")
+    L.append("")
+    L.append(f"- Data: recorded through {asof.date()}; latest completed NYSE session {expected.date()}")
+    L.append(f"- Account (simulated money): **${equity:,.2f}** ({equity / cfg['cash'] - 1:+.2%} since "
+             f"{cfg['start']}); SPY buy-and-hold over the same period {bret:+.2%}")
+    L.append("- Market filter: " + ("ON, SPY above its 200-day MA, new buys allowed" if filt
+                                   else "OFF, SPY below its 200-day MA, no new buys"))
     L.append(f"- Universe: {UNIVERSE_LABEL[cfg['universe']]}")
     if universe_now:
         L.append(f"- Buyable this month ({len(universe_now)}): {' '.join(universe_now)}")
     L.append("")
 
-    L.append("## Orders for the next open")
-    if not res.pending_exits and not res.pending_entries:
+    if problems:
+        L.append("## Data problems (no new orders published)")
+        L += [f"- {p}" for p in problems]
+        L.append("")
+
+    L.append(f"## Orders for the open of {nxt.date()} (valid for that open only)")
+    orders = last["new_orders"] if last else []
+    exits = state["pending_exits"]
+    if status == "DATA ERROR":
+        L.append("None published: data for the latest session failed the checks above.")
+    elif not orders and not exits:
         L.append("None.")
-    for sym, why in res.pending_exits.items():
-        pos = next(p for p in res.open_positions if p.symbol == sym)
-        L.append(f"- **SELL {sym}** {pos.shares:.4f} shares (reason: {REASON.get(why, why)})")
-    for o in sorted(res.pending_entries, key=lambda o: -o.score):
-        close = res.last_close[o.symbol]
-        stop = close - res.config.atr_stop_mult * o.atr
-        L.append(f"- **BUY {o.symbol}** {o.shares:.4f} shares, about ${o.shares * close:,.0f} "
-                 f"(last close ${close:.2f}; stop about ${stop:.2f}, set from the actual fill price)")
+    for sym, reason in exits.items():
+        p = next(p for p in state["positions"] if p["symbol"] == sym)
+        L.append(f"- **SELL {sym}** {p['shares']:.4f} shares: {REASON.get(reason, reason)}")
+    for o in orders:
+        L.append(f"- **BUY {o['symbol']}** {o['shares']:.4f} shares, about ${o['shares'] * o['signal_close']:,.0f}. "
+                 f"Why: new 20-day closing high, above its 50-day MA, market filter on; ranked {o['rank']} of "
+                 f"{o['candidates']} candidates by 60-day momentum. Size set by the {o['sized_by']}. "
+                 f"Planned stop about ${o['planned_stop']:.2f} (reset from the actual fill price).")
     L.append("")
 
+    if status == "NO SIGNAL":
+        L.append("## Why no orders")
+        if not filt:
+            L.append("- The market filter is off, so no new positions are opened.")
+        L.append(f"- Of {diag['evaluated']} buyable stocks with a price (not already held), "
+                 f"{diag['above_50d_ma']} closed above their 50-day MA and {diag['new_20d_high']} made a new "
+                 f"20-day closing high; {len(diag['both'])} did both.")
+        if diag["closest"]:
+            near = ", ".join(f"{s} (+{g:.1%})" for s, g in diag["closest"])
+            L.append(f"- Closest to a signal (above the 50-day MA, gain needed for a new 20-day high): {near}")
+        if last and last.get("free_slots", 1) == 0:
+            L.append("- All 5 position slots are in use.")
+        L.append("")
+
+    if last and (last["buys"] or last["sells"] or last["skipped_buys"]):
+        L.append(f"## Simulated fills on {asof.date()}")
+        for b in last["buys"]:
+            extra = f"; {b['note']}" if b["note"] else ""
+            L.append(f"- Bought {b['symbol']}: planned {b['planned_shares']:.4f}, filled {b['filled_shares']:.4f} "
+                     f"shares at ${b['price']:.2f}, stop ${b['stop']:.2f}{extra}")
+        for s in last["skipped_buys"]:
+            L.append(f"- Skipped {s['symbol']}: {s['reason']}")
+        for t in last["sells"]:
+            if t["exit_date"] == str(asof.date()):
+                L.append(f"- Sold {t['symbol']} at ${t['exit_price']:.2f}: {REASON.get(t['exit_reason'])}, "
+                         f"P/L ${t['pnl']:+,.2f} ({t['return_pct']:+.1%})")
+        L.append("")
+
     L.append("## Open positions")
-    if not res.open_positions:
+    if not state["positions"]:
         L.append("None.")
     else:
         L.append("| Symbol | Shares | Entry date | Entry price | Last close | P/L | Stop |")
         L.append("|---|---|---|---|---|---|---|")
-        for p in res.open_positions:
-            px = res.last_close[p.symbol]
-            L.append(f"| {p.symbol} | {p.shares:.4f} | {p.entry_date.date()} | ${p.entry_price:.2f} "
-                     f"| ${px:.2f} | {px / p.entry_price - 1:+.1%} | ${p.stop:.2f} |")
+        for p in state["positions"]:
+            px = state["last_close"][p["symbol"]]
+            L.append(f"| {p['symbol']} | {p['shares']:.4f} | {p['entry_date']} | ${p['entry_price']:.2f} "
+                     f"| ${px:.2f} | {px / p['entry_price'] - 1:+.1%} | ${p['stop']:.2f} |")
     L.append("")
-
+    L.append("## Risk")
+    largest = f"{risk['largest'][0]} {risk['largest'][1] / equity:.0%}" if risk["largest"] else "none"
+    L.append(f"- Cash {risk['cash_pct']:.0%}, invested {risk['invested_pct']:.0%}, largest position {largest}")
+    if state["positions"]:
+        L.append(f"- If every stop were hit at its stop price: −{risk['loss_if_all_stops_hit_pct']:.1%} of equity. "
+                 "Overnight gaps can make the real loss larger (worst single trade in the backtest: "
+                 "−4.96% of equity).")
+    else:
+        L.append("- No positions, so nothing is at risk.")
+    L.append("")
     L.append("## Closed trades")
-    t = res.trades
-    if t.empty:
+    if not trades:
         L.append("None yet.")
     else:
         L.append("| Symbol | Entry date | Exit date | P/L | Return | Reason |")
         L.append("|---|---|---|---|---|---|")
-        for _, r in t.iterrows():
-            L.append(f"| {r.symbol} | {r.entry_date.date()} | {r.exit_date.date()} | ${r.pnl:+,.2f} "
-                     f"| {r.return_pct:+.1%} | {REASON.get(r.exit_reason, r.exit_reason)} |")
-        L.append("")
-        L.append(f"{len(t)} trades, {int((t.pnl > 0).sum())} profitable, total fees ${t.fees.sum():.2f}")
-    return "\n".join(L) + "\n"
+        for t in trades:
+            L.append(f"| {t['symbol']} | {t['entry_date']} | {t['exit_date']} | ${t['pnl']:+,.2f} "
+                     f"| {t['return_pct']:+.1%} | {REASON.get(t['exit_reason'], t['exit_reason'])} |")
+    report = "\n".join(L) + "\n"
 
-
-def log_orders(res) -> None:
-    asof = str(res.equity.index[-1].date())
-    rows = [{"asof": asof, "side": "SELL", "symbol": s, "shares": None, "reason": w}
-            for s, w in res.pending_exits.items()]
-    rows += [{"asof": asof, "side": "BUY", "symbol": o.symbol, "shares": round(o.shares, 4),
-              "reason": "signal"} for o in res.pending_entries]
-    path = PAPER / "orders_log.csv"
-    old = pd.read_csv(path) if path.exists() else pd.DataFrame(columns=["asof", "side", "symbol", "shares", "reason"])
-    old = old[old["asof"].astype(str) != asof]  # rerun on the same day replaces that day
-    pd.concat([old, pd.DataFrame(rows)], ignore_index=True).to_csv(path, index=False)
-
-
-def snapshot(res, bench: pd.Series, market: pd.DataFrame, cfg: dict, report: str,
-             universe_now: list[str] | None) -> dict:
-    """Structured copy of today's state, read by the Muse connector (muse/)."""
-    m = market["Close"]
-    eq = float(res.equity.iloc[-1])
-    t = res.trades
-    return {
-        "asof": str(res.equity.index[-1].date()),
-        "start": cfg["start"],
-        "strategy": cfg["strategy"],
-        "universe": UNIVERSE_LABEL[cfg["universe"]],
-        "buyable_this_month": universe_now or [],
-        "initial_cash": cfg["cash"],
-        "equity": round(eq, 2),
-        "return_pct": round(eq / cfg["cash"] - 1, 4),
-        "spy_return_pct": round(float(bench.iloc[-1] / bench.iloc[0] - 1), 4),
-        "market_filter_on": bool(m.iloc[-1] > sma(m, 200).iloc[-1]),
-        "next_open_orders": (
-            [{"side": "SELL", "symbol": s, "shares": round(next(p.shares for p in res.open_positions
-                                                              if p.symbol == s), 4),
-              "reason": REASON.get(w, w)} for s, w in res.pending_exits.items()]
-            + [{"side": "BUY", "symbol": o.symbol, "shares": round(o.shares, 4),
-                "approx_value": round(o.shares * res.last_close[o.symbol], 2)}
-               for o in sorted(res.pending_entries, key=lambda o: -o.score)]
-        ),
-        "positions": [
-            {"symbol": p.symbol, "shares": round(p.shares, 4), "entry_date": str(p.entry_date.date()),
-             "entry_price": round(p.entry_price, 2), "last_close": round(res.last_close[p.symbol], 2),
-             "pnl_pct": round(res.last_close[p.symbol] / p.entry_price - 1, 4), "stop": round(p.stop, 2)}
-            for p in res.open_positions
-        ],
-        "closed_trades": [
-            {"symbol": r.symbol, "entry_date": str(r.entry_date.date()), "exit_date": str(r.exit_date.date()),
-             "pnl": round(r.pnl, 2), "return_pct": round(r.return_pct, 4),
-             "reason": REASON.get(r.exit_reason, r.exit_reason)}
-            for _, r in t.iterrows()
-        ],
-        "fees_paid": round(float(t.fees.sum()), 2) if not t.empty else 0.0,
+    snap = {
+        "status": status, "status_detail": why, "data_problems": problems,
+        "asof": str(asof.date()), "latest_completed_session": str(expected.date()),
+        "orders_valid_for_open_of": str(nxt.date()),
+        "start": cfg["start"], "strategy": cfg["strategy"], "universe": UNIVERSE_LABEL[cfg["universe"]],
+        "buyable_this_month": universe_now, "initial_cash": cfg["cash"],
+        "equity": round(equity, 2), "return_pct": round(equity / cfg["cash"] - 1, 4),
+        "spy_return_pct": round(bret, 4), "market_filter_on": filt,
+        "next_open_orders": ([] if status == "DATA ERROR" else
+                             [{"side": "SELL", "symbol": s, "reason": REASON.get(r, r)} for s, r in exits.items()]
+                             + [{"side": "BUY", "symbol": o["symbol"], "shares": round(o["shares"], 4),
+                                 "approx_value": round(o["shares"] * o["signal_close"], 2), "rank": o["rank"],
+                                 "candidates": o["candidates"], "sized_by": o["sized_by"],
+                                 "planned_stop": round(o["planned_stop"], 2)} for o in orders]),
+        "no_signal_reasons": diag if status == "NO SIGNAL" else None,
+        "positions": [{"symbol": p["symbol"], "shares": round(p["shares"], 4), "entry_date": p["entry_date"],
+                       "entry_price": round(p["entry_price"], 2),
+                       "last_close": round(state["last_close"][p["symbol"]], 2),
+                       "pnl_pct": round(state["last_close"][p["symbol"]] / p["entry_price"] - 1, 4),
+                       "stop": round(p["stop"], 2)} for p in state["positions"]],
+        "risk": {k: (round(v, 4) if isinstance(v, float) else v) for k, v in risk.items()},
+        "closed_trades": [{"symbol": t["symbol"], "entry_date": t["entry_date"], "exit_date": t["exit_date"],
+                           "pnl": round(t["pnl"], 2), "return_pct": round(t["return_pct"], 4),
+                           "reason": REASON.get(t["exit_reason"], t["exit_reason"])} for t in trades],
+        "fees_paid": round(sum(t["fees"] for t in trades), 2),
         "report_markdown": report,
     }
+    return report, snap
 
+
+def append_orders_log(records: list[dict]) -> None:
+    """Append-only log of every order announced; recorded days are never rewritten."""
+    rows = []
+    for r in records:
+        rows += [{"asof": r["date"], "side": "SELL", "symbol": s, "shares": None, "reason": w}
+                 for s, w in r["new_exits"].items()]
+        rows += [{"asof": r["date"], "side": "BUY", "symbol": o["symbol"], "shares": round(o["shares"], 4),
+                  "reason": f"rank {o['rank']} of {o['candidates']}"} for o in r["new_orders"]]
+    if not rows:
+        return
+    path = PAPER / "orders_log.csv"
+    pd.DataFrame(rows).to_csv(path, mode="a", header=not path.exists(), index=False)
+
+
+# ---------- main ----------
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--cash", type=float, default=3000.0, help="starting USD (first run only)")
+    p.add_argument("--cash", type=float, default=3000.0, help="starting USD (new account only)")
     p.add_argument("--strategy", default="breakout", choices=list(STRATEGIES))
     p.add_argument("--universe", default="sp500", choices=list(UNIVERSE_LABEL),
                    help="universe for a NEW account (first run only)")
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
-    PAPER.mkdir(exist_ok=True)
-    (PAPER / "reports").mkdir(exist_ok=True)
+    (PAPER / "reports").mkdir(parents=True, exist_ok=True)
 
     cfg = load_config(args.cash, args.strategy, args.universe)
-    since = (pd.Timestamp.now() - pd.Timedelta(days=HISTORY_DAYS)).strftime("%Y-%m-%d")
-    if cfg["start"]:
-        since = min(since, (pd.Timestamp(cfg["start"]) - pd.Timedelta(days=HISTORY_DAYS)).strftime("%Y-%m-%d"))
-    data, members = load_market(cfg, since)
-    if BENCHMARK not in data:
-        sys.exit("SPY download failed; skipping today's run.")
-    drop_incomplete_today(data)
-    market = data.pop(BENCHMARK)
-    universe_now = attach_eligibility(data, members, market.index) if members else None
-
+    expected = last_completed_session()
     if not cfg["start"]:
-        cfg["start"] = str(market.index[-1].date())  # first completed day = day 1
+        cfg["start"] = str(expected.date())
         (PAPER / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    since = (min(expected, pd.Timestamp(cfg["start"])) - pd.Timedelta(days=HISTORY_DAYS)).strftime("%Y-%m-%d")
 
-    if members:  # stocks never buyable since the start cannot be held; skip them for speed
-        data = {s: d for s, d in data.items() if d.loc[cfg["start"]:, "Eligible"].any()}
+    data, members = load_market(cfg, since)
+    data = {s: d[d.index <= expected] for s, d in data.items()}  # never use a still-forming bar
+    problems: list[str] = []
+    if BENCHMARK not in data or data[BENCHMARK].empty:
+        sys.exit("SPY download failed; nothing recorded today.")
+    market = data.pop(BENCHMARK)
+    if market.index[-1] < expected:
+        problems.append(f"SPY data ends {market.index[-1].date()}, but the latest completed session is "
+                        f"{expected.date()} (data provider late?)")
+
+    universe_now: list[str] = []
+    if members:
+        elig = top_liquid_eligibility(data, members, market.index, top_n=SP500_TOP_N)
+        for s in list(data):
+            data[s] = data[s].assign(Eligible=elig[s].reindex(data[s].index).fillna(False))
+        today = elig.iloc[-1]
+        universe_now = sorted(today[today].index)
+    frames = prepare_frames(data, STRATEGIES[cfg["strategy"]](), market)
+
+    state = ledger.load_state(LEDGER)
+    if state is None:  # new ledger: start the day before the first session
+        first = pd.Timestamp(cfg["start"])
+        state = ledger.new_state(first - pd.Timedelta(days=1), cfg["cash"])
+    todo = sessions_between(state["asof"], min(expected, market.index[-1]))
+    missing = [d for d in todo if d not in market.index]
+    if missing:
+        problems.append(f"SPY has no bar for session(s) {', '.join(str(d.date()) for d in missing)}")
+        todo = [d for d in todo if d < missing[0]]
 
     bt_cfg = BacktestConfig(initial_cash=cfg["cash"])
-    res = run_backtest(data, STRATEGIES[cfg["strategy"]](), market, bt_cfg,
-                       start=cfg["start"], close_at_end=False)
-    bench = buy_and_hold(market, cfg["cash"], cfg["start"], None, bt_cfg.costs)
+    state, records, bad = ledger.advance(state, frames, bt_cfg, todo, lambda d: members_on(members, d))
+    problems += bad
+    for r in records:
+        ledger.save_day(LEDGER, r)
+    if records:
+        ledger.save_state(LEDGER, state)
+        append_orders_log(records)
 
-    report = build_report(res, bench, market, cfg, universe_now)
-    asof = res.equity.index[-1].date()
-    (PAPER / "reports" / f"{asof}.md").write_text(report, encoding="utf-8")
-    log_orders(res)
-    snap = json.dumps(snapshot(res, bench, market, cfg, report, universe_now), ensure_ascii=False, indent=2)
+    days = ledger.load_days(LEDGER)
+    asof = pd.Timestamp(state["asof"])
+    if problems:
+        status, why = "DATA ERROR", "Some data failed the checks, so the ledger stopped at the last good session."
+    elif state["pending_entries"] or state["pending_exits"]:
+        status, why = "ORDERS QUEUED", f"Simulated orders are queued for the open of {next_session(asof).date()}."
+    else:
+        status, why = "NO SIGNAL", "Data is complete and no buy or sell rule fired."
+    held = {p["symbol"] for p in state["positions"]}
+    diag = diagnostics(frames, data, asof, held) if asof in market.index else {
+        "buyable": 0, "evaluated": 0, "above_50d_ma": 0, "new_20d_high": 0, "both": [], "closest": []}
+    report, snap = build_report(status, why, state, days, cfg, expected, market, diag, problems, universe_now)
+
+    (PAPER / "reports" / f"{asof.date()}.md").write_text(report, encoding="utf-8")
     out = ROOT / "muse" / "data" / "latest.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(snap, encoding="utf-8")
+    out.write_text(json.dumps(snap, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print(report)
 
 

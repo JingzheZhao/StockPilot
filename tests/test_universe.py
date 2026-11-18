@@ -51,4 +51,8 @@ def test_breakout_respects_eligible_column():
 
 def test_coverage_counts_member_months_with_data():
     members = {pd.Timestamp("2020-01-01"): {"A", "B"}, pd.Timestamp("2020-02-01"): {"A", "C"}}
-    assert coverage(members, {"A"}, "2020-01-01") == 0.5
+    jan_only = pd.DataFrame({"Close": [1.0]}, index=pd.DatetimeIndex(["2020-01-15"]))
+    both = pd.DataFrame({"Close": [1.0, 1.0]}, index=pd.DatetimeIndex(["2020-01-15", "2020-02-14"]))
+    # A has prices in both months; C has data, but only for January, when it was not a member.
+    assert coverage(members, {"A": both, "C": jan_only}, "2020-01-01") == 0.5
+    assert coverage(members, {"A": jan_only}, "2020-01-01") == 0.25

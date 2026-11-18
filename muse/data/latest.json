@@ -1,5 +1,10 @@
 {
+  "status": "NO SIGNAL",
+  "status_detail": "Data is complete and no buy or sell rule fired.",
+  "data_problems": [],
   "asof": "2026-11-17",
+  "latest_completed_session": "2026-11-17",
+  "orders_valid_for_open_of": "2026-11-18",
   "start": "2026-11-17",
   "strategy": "breakout",
   "universe": "S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly",
@@ -61,8 +66,35 @@
   "spy_return_pct": 0.0,
   "market_filter_on": true,
   "next_open_orders": [],
+  "no_signal_reasons": {
+    "buyable": 50,
+    "evaluated": 50,
+    "above_50d_ma": 13,
+    "new_20d_high": 0,
+    "both": [],
+    "closest": [
+      [
+        "COST",
+        0.0032970905921907434
+      ],
+      [
+        "BRK-B",
+        0.01053240263979438
+      ],
+      [
+        "AAPL",
+        0.012389489659830222
+      ]
+    ]
+  },
   "positions": [],
+  "risk": {
+    "cash_pct": 1.0,
+    "invested_pct": 0.0,
+    "largest": null,
+    "loss_if_all_stops_hit_pct": 0.0
+  },
   "closed_trades": [],
-  "fees_paid": 0.0,
-  "report_markdown": "# Paper trading report 2026-11-17\n\n- Started: 2026-11-17 with $3,000 (simulated money, not real)\n- Account value: **$3,000.00** (+0.00%)\n- SPY buy-and-hold over the same period: +0.00%\n- Market filter: ON (SPY above its 200-day MA, new buys allowed)\n- Universe: S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly\n- Buyable this month (50): AAPL AMAT AMD AMZN AVGO BAC BE BRK-B CAT COHR COIN COST CRM CRWD CSCO CVX DELL GEV GOOGL GS HOOD INTC JNJ JPM KLAC LITE LLY LRCX MA META MRNA MRVL MSFT MU NFLX NOW NVDA ORCL PANW PLTR QCOM SNDK STX TSLA TXN UNH V WDC WMT XOM\n\n## Orders for the next open\nNone.\n\n## Open positions\nNone.\n\n## Closed trades\nNone yet.\n"
+  "fees_paid": 0,
+  "report_markdown": "# Paper trading report 2026-11-17\n\n**Status: NO SIGNAL**. Data is complete and no buy or sell rule fired.\n\n- Data: recorded through 2026-11-17; latest completed NYSE session 2026-11-17\n- Account (simulated money): **$3,000.00** (+0.00% since 2026-11-17); SPY buy-and-hold over the same period +0.00%\n- Market filter: ON, SPY above its 200-day MA, new buys allowed\n- Universe: S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly\n- Buyable this month (50): AAPL AMAT AMD AMZN AVGO BAC BE BRK-B CAT COHR COIN COST CRM CRWD CSCO CVX DELL GEV GOOGL GS HOOD INTC JNJ JPM KLAC LITE LLY LRCX MA META MRNA MRVL MSFT MU NFLX NOW NVDA ORCL PANW PLTR QCOM SNDK STX TSLA TXN UNH V WDC WMT XOM\n\n## Orders for the open of 2026-11-18 (valid for that open only)\nNone.\n\n## Why no orders\n- Of 50 buyable stocks with a price (not already held), 13 closed above their 50-day MA and 0 made a new 20-day closing high; 0 did both.\n- Closest to a signal (above the 50-day MA, gain needed for a new 20-day high): COST (+0.3%), BRK-B (+1.1%), AAPL (+1.2%)\n\n## Open positions\nNone.\n\n## Risk\n- Cash 100%, invested 0%, largest position none\n- No positions, so nothing is at risk.\n\n## Closed trades\nNone yet.\n"
 }

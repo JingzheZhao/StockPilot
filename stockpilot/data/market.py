@@ -26,18 +26,22 @@ def _download(symbol: str, start: str, end: str | None) -> pd.DataFrame:
     return df
 
 
-def download_many(symbols: list[str], start: str, chunk: int = 100) -> dict[str, pd.DataFrame]:
+def download_many(symbols: list[str], start: str, chunk: int = 100,
+                  auto_adjust: bool = True) -> dict[str, pd.DataFrame]:
     """Fresh daily bars for many symbols, fetched in batches (no cache).
 
     Much faster than one request per symbol; used by daily paper trading,
     which needs ~500 S&P 500 members to rank them by trading volume.
+
+    auto_adjust=False returns prices adjusted for splits only, not dividends.
+    Those stay the same day after day, which the paper ledger relies on.
     """
     import yfinance as yf
 
     out: dict[str, pd.DataFrame] = {}
     for i in range(0, len(symbols), chunk):
         batch = symbols[i:i + chunk]
-        raw = yf.download(batch, start=start, auto_adjust=True, progress=False,
+        raw = yf.download(batch, start=start, auto_adjust=auto_adjust, progress=False,
                           threads=True, group_by="ticker")
         if raw is None or raw.empty:
             continue

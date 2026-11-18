@@ -41,10 +41,11 @@ NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 TOOLS = [
     {
         "name": "get_summary",
-        "description": "Account overview: data date, simulated account value, return since start "
-                       "vs simply holding SPY, whether the market filter allows new buys, the stock "
-                       "universe and this month's buyable stocks, and counts of open positions and "
-                       "orders for the next open.",
+        "description": "Start here. Today's status: DATA ERROR (data failed checks, no new orders), "
+                       "ORDERS QUEUED (simulated orders for the open named in orders_valid_for_open_of), "
+                       "or NO SIGNAL (with no_signal_reasons: how many stocks met each rule and which "
+                       "were closest). Also: data date, simulated account value and return vs SPY, "
+                       "market filter, risk summary, and this month's buyable stocks.",
         "inputSchema": NO_ARGS,
     },
     {
@@ -55,7 +56,8 @@ TOOLS = [
     },
     {
         "name": "get_next_orders",
-        "description": "Simulated buy/sell orders queued for the next market open, with reasons.",
+        "description": "Simulated buy/sell orders queued for the next market open, with the session "
+                       "they are valid for, candidate rank, sizing reason and planned stop.",
         "inputSchema": NO_ARGS,
     },
     {
@@ -83,8 +85,11 @@ def load() -> dict:
 def call_tool(name: str, args: dict) -> dict:
     d = load()
     if name == "get_summary":
-        return {k: d.get(k) for k in ("asof", "start", "strategy", "universe", "initial_cash", "equity",
-                                      "return_pct", "spy_return_pct", "market_filter_on", "fees_paid")} | {
+        return {k: d.get(k) for k in ("status", "status_detail", "data_problems", "asof",
+                                      "latest_completed_session", "orders_valid_for_open_of", "start",
+                                      "strategy", "universe", "initial_cash", "equity", "return_pct",
+                                      "spy_return_pct", "market_filter_on", "fees_paid", "risk",
+                                      "no_signal_reasons")} | {
             "buyable_this_month": d.get("buyable_this_month", []),
             "open_positions": len(d["positions"]),
             "next_open_orders": len(d["next_open_orders"]),
@@ -94,7 +99,9 @@ def call_tool(name: str, args: dict) -> dict:
     if name == "get_positions":
         return {"asof": d["asof"], "positions": d["positions"]}
     if name == "get_next_orders":
-        return {"asof": d["asof"], "orders_for_next_open": d["next_open_orders"]}
+        return {"asof": d["asof"], "status": d.get("status"),
+                "valid_for_open_of": d.get("orders_valid_for_open_of"),
+                "orders_for_next_open": d["next_open_orders"]}
     if name == "get_closed_trades":
         limit = int(args.get("limit", 20))
         limit = max(1, min(limit, 200))

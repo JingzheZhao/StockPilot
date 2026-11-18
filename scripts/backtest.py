@@ -61,7 +61,7 @@ def load(args) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
         from stockpilot.universe import coverage, monthly_members, top_liquid_eligibility
 
         members = monthly_members(history)
-        cov = coverage(members, set(data), PERIODS["full"][0])
+        cov = coverage(members, data, PERIODS["full"][0])
         print(f"Price data found for {cov:.1%} of S&P 500 member-months since {PERIODS['full'][0]}")
         elig = top_liquid_eligibility(data, members, market.index, top_n=SP500_TOP_N)
         ever = elig.columns[elig.any()]

@@ -50,12 +50,15 @@ def top_liquid_eligibility(
     return eligible
 
 
-def coverage(members: dict[pd.Timestamp, set[str]], available: set[str], start: str) -> float:
-    """Share of member-months (from `start`) whose stock has price data."""
+def coverage(members: dict[pd.Timestamp, set[str]], data: dict[str, pd.DataFrame], start: str) -> float:
+    """Share of member-months (from `start`) whose stock has at least one price
+    inside that month. Having data for some other period does not count."""
+    months_with_prices = {s: set(d.index.to_period("M")) for s, d in data.items()}
     total = hit = 0
     for m, syms in members.items():
         if m < pd.Timestamp(start):
             continue
+        month = pd.Timestamp(m).to_period("M")
         total += len(syms)
-        hit += len(syms & available)
+        hit += sum(1 for s in syms if month in months_with_prices.get(s, ()))
     return hit / total if total else float("nan")

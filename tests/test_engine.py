@@ -147,8 +147,17 @@ def test_keep_open_matches_closed_run_until_the_end():
     market = make_ohlcv(900, seed=6, drift=0.0005)
     a = run_backtest(data, Breakout(), market)
     b = run_backtest(data, Breakout(), market, close_at_end=False)
-    pd.testing.assert_series_equal(a.equity, b.equity)
+    # Identical until the last day, where the closed run books its exit costs.
+    pd.testing.assert_series_equal(a.equity.iloc[:-1], b.equity.iloc[:-1])
+    assert a.equity.iloc[-1] < b.equity.iloc[-1]
     assert len(a.trades) == len(b.trades) + len(b.open_positions)
+
+
+def test_final_equity_matches_trade_list():
+    data = make_universe([f"S{i}" for i in range(8)], n_days=900, seed=5)
+    market = make_ohlcv(900, seed=6, drift=0.0005)
+    r = run_backtest(data, Breakout(), market)
+    assert r.equity.iloc[-1] == pytest.approx(r.config.initial_cash + r.trades["pnl"].sum())
 
 
 def test_trailing_stop_follows_price_up_and_never_down():

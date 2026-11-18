@@ -103,4 +103,4 @@ Rerun with the original settings:
 | 2015–2021 | 8.8% | −45.9% | 0.44 | 0 | 0 | 0 |
 | 2022– | 18.5% | −50.2% | 0.62 | 0 | 0 | 0 |
 
-Identical to before: across all 143 monthly rebalances no top-10 pick lacked an open price, and no held stock's data ended early. The fill rules were never exercised here. The real gap is that delisted stocks are absent from the price data altogether (about 8% of member-months), which no fill rule can fix.
+Identical to before: across all 143 monthly rebalances no top-10 pick lacked an open price, and no held stock's data ended early. The fill rules were never exercised here. The real gap is that delisted stocks are absent from the price data altogether, which no fill rule can fix. (Measured correctly, i.e. requiring a price inside each month, 10.1% of member-months lack data, not the "about 8%" written in the plan above.)
