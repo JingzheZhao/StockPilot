@@ -27,4 +27,6 @@ class Breakout(Strategy):
         out["atr"] = atr(df, self.atr_days)
         out["score"] = momentum(c, 60)
         out["entry"] &= out["atr"].notna() & out["score"].notna()
+        if "Eligible" in df.columns:  # point-in-time universe filter (stockpilot/universe.py)
+            out["entry"] &= df["Eligible"].fillna(False).astype(bool)
         return out

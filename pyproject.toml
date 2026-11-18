@@ -10,6 +10,8 @@ dependencies = [
     "matplotlib>=3.7",
     "tabulate>=0.9",
     "tzdata",  # time-zone database; Windows has none built in
+    "lxml",  # HTML tables for the S&P 500 membership history
+    "certifi",  # current CA certificates for HTTPS to Wikipedia
 ]
 
 [project.optional-dependencies]

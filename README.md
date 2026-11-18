@@ -28,17 +28,36 @@ Parameters were not tuned on any period. To add a strategy, implement `prepare()
 
 ## Backtest
 
-`python scripts/backtest.py` tests the strategy over three periods (2015–2021, 2022 to date, full) and compares it with SPY buy-and-hold. Results go to `results/`: `summary.md`, equity curves `equity_<period>.png`, and per-trade logs `trades_<strategy>_<period>.csv`. Options: `--cash 5000` sets starting cash, `--refresh` re-downloads prices, `--demo` runs offline on synthetic data.
+`python scripts/backtest.py --universe <curated|etf|sp500>` tests the strategy over three periods (2015–2021, 2022 to date, full) and compares it with SPY buy-and-hold. Results go to `results/<universe>/`: `summary.md`, equity curves `equity_<period>.png`, and per-trade logs `trades_<strategy>_<period>.csv`. Options: `--cash 5000` sets starting cash, `--refresh` re-downloads prices, `--demo` runs offline on synthetic data.
 
-Results on real data ($3,000 starting cash, after commissions and slippage):
+### Universes
 
-| Period | CAGR | Max drawdown | SPY CAGR | SPY max drawdown |
-|---|---|---|---|---|
-| 2015–2021 | 13.1% | −20.5% | 14.8% | −33.7% |
-| 2022 to date | 12.8% | −22.8% | 10.8% | −24.5% |
-| Full | 12.1% | −24.5% | 13.2% | −33.7% |
+| Universe | How stocks are chosen | Survivorship bias |
+|---|---|---|
+| `curated` | 37 large caps and ETFs picked by hand in 2026 | High: picked with hindsight |
+| `etf` | 11 SPDR sector ETFs plus QQQ, IWM, DIA | None: no fund closed during the test |
+| `sp500` | Each month, the 50 most traded stocks (60-day average dollar volume, measured before the month starts) among that month's S&P 500 members | Low: membership is point-in-time; 8.2% of member-months lack price data (mostly delisted or acquired companies) |
 
-Over the full period the strategy trails SPY slightly; its advantage is a smaller drawdown.
+S&P 500 membership comes from the Wikipedia revision live on the first day of each month (`scripts/build_sp500_history.py` → `data/universe/sp500_monthly.csv`). Tickers that changed are mapped to one symbol through the company's SEC CIK number.
+
+### Results
+
+$3,000 starting cash, after commissions and slippage, 2015-01 to 2026-11:
+
+| Universe | CAGR | Max drawdown | Trades | Fees | Top 5 trades' share of gross profit |
+|---|---|---|---|---|---|
+| `curated` | 12.1% | −24.5% | 384 | $791 | 69% |
+| `sp500` | 7.6% | −25.8% | 423 | $849 | 89% |
+| `etf` | 1.2% | −27.6% | 396 | $792 | 60% |
+| SPY buy-and-hold | 13.2% | −33.7% | 1 | $1 | — |
+
+Findings:
+
+- **Survivorship bias was worth about 4.5% a year.** The same rules earn 12.1% on the hand-picked list but 7.6% on a point-in-time S&P 500 universe. The curated list's best trades were AMD, NVDA and INTC, stocks chosen knowing how they turned out.
+- **On unbiased universes the strategy does not beat buy-and-hold.** It trails SPY by 5.6% a year on `sp500` and by 12% on `etf`, with only a modestly smaller drawdown.
+- **Profits depend on a few big winners.** On `sp500`, five trades (MU, NVDA, SNDK, PLTR, CVX) produced 89% of gross profit. Missing one such trade changes the result a lot.
+- **ETFs move too little for this account size.** The average winning ETF trade made 7%, and the $1 minimum commission took 64% of gross profit.
+- The `sp500` result is still somewhat optimistic: the 8.2% of member-months without price data are mostly companies that were delisted or acquired.
 
 **Rejected strategy.** A trend-pullback strategy (buy when the close reclaims the 20-day MA) was tested alongside. It returned 16.0% CAGR in 2015–2021 but −8.9% from 2022, with a −46.9% max drawdown. The cause: entries sat too close to the 50-day MA exit line. 37% of trades entered within 1% of it and were shaken out by small moves, and fees reached almost half of the starting cash. Adding entry and exit buffers cut the drawdown to −18%, but CAGR from 2022 was only 3.3%, far behind breakout, so the strategy was removed.
 

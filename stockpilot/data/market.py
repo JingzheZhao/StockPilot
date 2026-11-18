@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -45,13 +46,26 @@ def load_prices(
     cache_dir: str | Path = "data/cache",
     refresh: bool = False,
 ) -> dict[str, pd.DataFrame]:
-    """Return {symbol: OHLCV DataFrame}. Cached files are reused unless refresh=True."""
+    """Return {symbol: OHLCV DataFrame}. Cached files are reused unless refresh=True.
+
+    A small manifest records the start date each file was requested from, so a
+    stock that simply listed after `start` is not re-downloaded on every run.
+    Symbols with no data (e.g. delisted) are remembered too and skipped.
+    """
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
+    manifest_path = cache / "_manifest.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     out: dict[str, pd.DataFrame] = {}
-    for sym in symbols:
+    for i, sym in enumerate(symbols):
         path = cache / f"{sym}.csv"
-        if path.exists() and not refresh:
+        asked = manifest.get(sym)
+        covered = asked is not None and pd.Timestamp(asked) <= pd.Timestamp(start)
+        if not refresh and covered:
+            if path.exists():
+                out[sym] = clean(pd.read_csv(path, index_col=0, parse_dates=True), sym)
+            continue  # cached, or known to have no data
+        if not refresh and path.exists() and asked is None:  # files from before the manifest
             df = pd.read_csv(path, index_col=0, parse_dates=True)
             if df.index.min() <= pd.Timestamp(start) + pd.Timedelta(days=7):
                 out[sym] = clean(df, sym)
@@ -60,8 +74,13 @@ def load_prices(
             df = clean(_download(sym, start, end), sym)
         except Exception as exc:  # network errors, delisted tickers
             log.warning("Skipping %s: %s", sym, exc)
+            if "No data" in str(exc):
+                manifest[sym] = start
+                manifest_path.write_text(json.dumps(manifest))
             continue
         df.to_csv(path)
+        manifest[sym] = start
+        manifest_path.write_text(json.dumps(manifest))
         out[sym] = df
-        log.info("Downloaded %s: %d rows", sym, len(df))
+        log.info("Downloaded %s: %d rows (%d/%d)", sym, len(df), i + 1, len(symbols))
     return out
