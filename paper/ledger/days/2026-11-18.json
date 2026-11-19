@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-18",
+  "sells": [],
+  "buys": [],
+  "skipped_buys": [],
+  "new_orders": [],
+  "new_exits": {},
+  "equity": 3000.0,
+  "positions": 0,
+  "free_slots": 5,
+  "corporate_actions": [],
+  "state": {
+    "asof": "2026-11-18",
+    "cash": 3000.0,
+    "positions": [],
+    "pending_entries": [],
+    "pending_exits": {},
+    "last_close": {}
+  }
+}
