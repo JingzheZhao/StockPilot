@@ -2,10 +2,14 @@ name: Daily paper trading
 
 on:
   schedule:
-    # 11:30 UTC, Tuesday-Saturday = early morning New York time after each
-    # Monday-Friday session, before the next open. Yahoo's daily bar can still
-    # be incomplete several hours after the close, so we run the next morning.
-    - cron: "30 11 * * 2-6"
+    # GitHub runs scheduled jobs "best effort": they can start hours late or be
+    # skipped under load. Runs are idempotent (a session is recorded once), so
+    # several attempts per trading day are safe; whichever runs first records it.
+    # Times are UTC, Tuesday-Saturday = after each Monday-Friday session.
+    # New York times below are winter (EST); add one hour in summer (EDT).
+    - cron: "30 4 * * 2-6"  # 23:30 ET: main run. Yahoo's bar is often still empty around 20:30.
+    - cron: "30 11 * * 2-6" # 06:30 ET: backup
+    - cron: "15 12 * * 2-6" # 07:15 ET: backup, before the 08:30 check in Muse
   workflow_dispatch: {} # "Run workflow" button for manual runs
 
 permissions:
@@ -45,6 +49,7 @@ jobs:
             echo "No new data today."
           else
             git commit -m "Paper trading report $(date -u +%Y-%m-%d)"
+            git pull --rebase # someone may have pushed code since this run started
             git push
           fi
 
