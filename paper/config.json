@@ -1,6 +1,12 @@
 {
-  "start": "2026-11-17",
-  "cash": 3000.0,
+  "start": "2026-11-19",
+  "capital_cad": 2000.0,
+  "initial_positions": [
+    {"symbol": "NVDA", "shares": 1, "avg_price": 154.32, "currency": "USD"},
+    {"symbol": "VFV.TO", "shares": 4, "avg_price": 183.78, "currency": "CAD"}
+  ],
+  "benchmark_cad": "VFV.TO",
   "strategy": "breakout",
-  "universe": "sp500"
+  "universe": "sp500",
+  "note": "Started from the user's real IBKR cash-account holdings on 2026-11-19 (2,000 CAD total, holdings included). Simulated only; nothing here touches the real account."
 }

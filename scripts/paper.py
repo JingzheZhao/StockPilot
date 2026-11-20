@@ -39,6 +39,7 @@ from stockpilot.backtest.engine import BacktestConfig, buy_and_hold, prepare_fra
 from stockpilot.config import BENCHMARK, CURATED, SP500_HISTORY, SP500_TOP_N  # noqa: E402
 from stockpilot.data.market import download_many  # noqa: E402
 from stockpilot.marketcal import last_completed_session, next_session, session_open, sessions_between  # noqa: E402
+from stockpilot.startbook import FX_SYMBOL, initial_state, to_usd_frame  # noqa: E402
 from stockpilot.strategy import STRATEGIES  # noqa: E402
 from stockpilot.strategy.indicators import sma  # noqa: E402
 from stockpilot.universe import monthly_members, top_liquid_eligibility  # noqa: E402
@@ -121,13 +122,44 @@ def risk_summary(state: dict, equity: float) -> dict:
     }
 
 
+def equity_from_state(state: dict) -> float:
+    return state["cash"] + sum(p["shares"] * state["last_close"][p["symbol"]] for p in state["positions"])
+
+
+def account_values(cfg: dict, state: dict, market: pd.DataFrame, fx: pd.Series | None,
+                   bench_cad: pd.Series | None) -> dict:
+    """Account value and the comparison shown in the report.
+
+    Accounts started from real holdings (capital_cad in the config) are shown
+    in CAD against putting the whole capital into VFV on the start date.
+    Older USD accounts are compared with SPY buy-and-hold.
+    """
+    asof, start = pd.Timestamp(state["asof"]), pd.Timestamp(cfg["start"])
+    usd = equity_from_state(state)
+    if "capital_cad" in cfg and fx is not None and not fx.empty:
+        rate = float(fx.loc[:asof].iloc[-1])
+        out = {"currency": "CAD", "equity": usd * rate, "equity_usd": usd, "usdcad": rate,
+               "capital": float(cfg["capital_cad"]), "bench_label": "all of it in VFV (S&P 500, CAD)",
+               "bench_return": None}
+        if bench_cad is not None and not bench_cad.loc[:start].empty and not bench_cad.loc[:asof].empty:
+            out["bench_return"] = float(bench_cad.loc[:asof].iloc[-1] / bench_cad.loc[:start].iloc[-1] - 1)
+    else:
+        cash0 = float(cfg.get("cash", usd))
+        bench = buy_and_hold(market, cash0, start, asof) if not market.loc[start:asof].empty else None
+        out = {"currency": "USD", "equity": usd, "equity_usd": usd, "usdcad": None, "capital": cash0,
+               "bench_label": "SPY buy-and-hold",
+               "bench_return": float(bench.iloc[-1] / bench.iloc[0] - 1) if bench is not None and len(bench) else None}
+    out["return"] = out["equity"] / out["capital"] - 1
+    # A start-from-holdings account that could not be opened yet has no value to show.
+    out["opened"] = not ("capital_cad" in cfg and usd == 0 and not state["positions"])
+    return out
+
+
 def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict, expected: pd.Timestamp,
-                 market: pd.DataFrame, diag: dict, problems: list[str], universe_now: list[str]) -> tuple[str, dict]:
+                 market: pd.DataFrame, diag: dict, problems: list[str], universe_now: list[str],
+                 money: dict, notes: list[str] | None = None) -> tuple[str, dict]:
     asof = pd.Timestamp(state["asof"])
-    equity = days[-1]["equity"] if days else cfg["cash"]
-    start = pd.Timestamp(cfg["start"])
-    bench = buy_and_hold(market, cfg["cash"], start, asof) if not market.loc[start:asof].empty else None
-    bret = float(bench.iloc[-1] / bench.iloc[0] - 1) if bench is not None and len(bench) else 0.0
+    equity = money["equity_usd"]  # USD: sizing, risk and positions are all in USD
     m = market["Close"].loc[:asof]
     filt = bool(m.iloc[-1] > sma(m, 200).iloc[-1]) if not m.empty else None
     nxt = next_session(asof)
@@ -139,8 +171,20 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
     L.append(f"**Status: {status}**. {why}")
     L.append("")
     L.append(f"- Data: recorded through {asof.date()}; latest completed NYSE session {expected.date()}")
-    L.append(f"- Account (simulated money): **${equity:,.2f}** ({equity / cfg['cash'] - 1:+.2%} since "
-             f"{cfg['start']}); SPY buy-and-hold over the same period {bret:+.2%}")
+    cur = money["currency"]
+    bench_txt = f"{money['bench_return']:+.2%}" if money["bench_return"] is not None else "n/a"
+    if not money["opened"]:
+        L.append(f"- Account (simulated money): **not opened yet**. It starts from the holdings in "
+                 f"paper/config.json at the {cfg['start']} close, once prices for that day are available.")
+    else:
+        L.append(f"- Account (simulated money): **{cur} {money['equity']:,.2f}** ({money['return']:+.2%} on "
+                 f"{cur} {money['capital']:,.0f} since {cfg['start']}); {money['bench_label']} over the same "
+                 f"period: {bench_txt}")
+    if cur == "CAD" and money["opened"]:
+        L.append(f"- Booked in USD (US {equity:,.2f}) because the strategy trades US stocks; "
+                 f"USD/CAD {money['usdcad']:.4f}. Currency conversion costs are not modeled.")
+    for n in notes or []:
+        L.append(f"- {n}")
     L.append("- Market filter: unavailable" if filt is None else "- Market filter: " + ("ON, SPY above its 200-day MA, new buys allowed" if filt
                                    else "OFF, SPY below its 200-day MA, no new buys"))
     L.append(f"- Universe: {UNIVERSE_LABEL[cfg['universe']]}")
@@ -236,9 +280,14 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
         "orders_valid_for_open_of": str(nxt.date()),
         "orders_expire_at": session_open(nxt).isoformat(),
         "start": cfg["start"], "strategy": cfg["strategy"], "universe": UNIVERSE_LABEL[cfg["universe"]],
-        "buyable_this_month": universe_now, "initial_cash": cfg["cash"],
-        "equity": round(equity, 2), "return_pct": round(equity / cfg["cash"] - 1, 4),
-        "spy_return_pct": round(bret, 4), "market_filter_on": filt,
+        "buyable_this_month": universe_now, "currency": money["currency"],
+        "account_opened": money["opened"], "initial_capital": money["capital"],
+        "equity": round(money["equity"], 2) if money["opened"] else None,
+        "equity_usd": round(equity, 2) if money["opened"] else None, "usdcad": money["usdcad"],
+        "return_pct": round(money["return"], 4) if money["opened"] else None,
+        "benchmark": money["bench_label"],
+        "benchmark_return_pct": None if money["bench_return"] is None else round(money["bench_return"], 4),
+        "notes": notes or [], "market_filter_on": filt,
         "next_open_orders": ([{"side": "SELL", "symbol": s, "reason": REASON.get(r, r)} for s, r in exits.items()]
                              + [{"side": "BUY", "symbol": o["symbol"], "shares": round(o["shares"], 4),
                                  "approx_value": round(o["shares"] * o["signal_close"], 2), "rank": o["rank"],
@@ -311,6 +360,38 @@ def main() -> None:
         elig = top_liquid_eligibility(data, members, market.index, top_n=SP500_TOP_N)
         for s in list(data):
             data[s] = data[s].assign(Eligible=elig[s].reindex(data[s].index).fillna(False))
+
+    # Holdings the account started with (possibly Canadian-listed) and the FX rate.
+    fx, bench_cad = None, None
+    start_holdings = cfg.get("initial_positions", [])
+    if start_holdings and not market.empty:
+        wanted = [FX_SYMBOL] + sorted({h["symbol"] for h in start_holdings} - set(data))
+        try:
+            extra = download_many(wanted, since, auto_adjust=False)
+        except Exception:
+            logging.exception("Could not load FX or start holdings")
+            extra = {}
+        extra = {s: d[d.index <= expected] for s, d in extra.items()}
+        if FX_SYMBOL in extra:
+            fx = extra.pop(FX_SYMBOL)["Close"]
+        else:
+            problems.append("USD/CAD exchange rate could not be loaded.")
+        for h in start_holdings:
+            sym = h["symbol"]
+            if sym in data:
+                continue
+            if sym not in extra:
+                problems.append(f"No prices for start holding {sym}.")
+                continue
+            if h["currency"] == "CAD":
+                if fx is None:
+                    continue
+                if sym == cfg.get("benchmark_cad"):
+                    bench_cad = extra[sym]["Close"]
+                frame = to_usd_frame(extra[sym], fx, market.index)
+            else:
+                frame = extra[sym]
+            data[sym] = frame.assign(Eligible=False) if members else frame  # held, never a buy candidate
     frames = prepare_frames(data, STRATEGIES[cfg["strategy"]](), market) if not market.empty else {}
 
     def eligible_on(day):
@@ -319,8 +400,21 @@ def main() -> None:
         return set(elig.columns[elig.loc[day]]) if day in elig.index else set()
 
 
+    bt_cfg = BacktestConfig(initial_cash=cfg.get("cash", 0.0))
     state = ledger.load_state(LEDGER)
-    if state is None:  # new ledger: start the day before the first session
+    if state is None and start_holdings:  # new account from real holdings, as of the start close
+        start = pd.Timestamp(cfg["start"])
+        ready = (fx is not None and not fx.loc[:start].empty
+                 and all(h["symbol"] in frames and start in frames[h["symbol"]].index for h in start_holdings))
+        if ready:
+            state, notes = initial_state(cfg, frames, float(fx.loc[:start].iloc[-1]), bt_cfg)
+            state["notes"] = notes
+            ledger.save_state(LEDGER, state)
+        else:  # report the problem, record nothing, and try again on the next run
+            problems.append(f"Cannot open the account: prices or FX for {start.date()} are missing.")
+            state = ledger.new_state(start, 0.0)
+            market = market.iloc[0:0]  # empty: no session is stepped below
+    elif state is None:  # new cash-only ledger: start the day before the first session
         first = pd.Timestamp(cfg["start"])
         state = ledger.new_state(first - pd.Timedelta(days=1), cfg["cash"])
     todo = sessions_between(state["asof"], min(expected, market.index[-1])) if not market.empty else []
@@ -343,7 +437,6 @@ def main() -> None:
         todo = [d for d in todo if d < day]
         break
 
-    bt_cfg = BacktestConfig(initial_cash=cfg["cash"])
     state, records, bad = ledger.advance(state, frames, bt_cfg, todo, lambda d: members_on(members, d), eligible_on)
     problems += bad
     for r in records:
@@ -365,7 +458,9 @@ def main() -> None:
     diag = diagnostics(frames, data, asof, held) if asof in market.index else {
         "buyable": 0, "evaluated": 0, "above_50d_ma": 0, "new_20d_high": 0, "both": [], "closest": []}
     universe_now = sorted(eligible_on(asof)) if members else []
-    report, snap = build_report(status, why, state, days, cfg, expected, market, diag, problems, universe_now)
+    money = account_values(cfg, state, market, fx, bench_cad)
+    report, snap = build_report(status, why, state, days, cfg, expected, market, diag, problems, universe_now,
+                                money, state.get("notes"))
 
     ledger.atomic_write(PAPER / "reports" / f"{expected.date()}.md", report)
     out = ROOT / "muse" / "data" / "latest.json"
