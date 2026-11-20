@@ -1,0 +1,39 @@
+{
+  "asof": "2026-11-19",
+  "cash": 728.3104442906096,
+  "positions": [
+    {
+      "symbol": "NVDA",
+      "shares": 1.0,
+      "entry_date": "2026-11-19",
+      "entry_price": 154.32,
+      "entry_fee": 0.0,
+      "stop": 122.17714364188058,
+      "bars_held": 0,
+      "peak_close": 145.97999572753906
+    },
+    {
+      "symbol": "VFV.TO",
+      "shares": 4.0,
+      "entry_date": "2026-11-19",
+      "entry_price": 128.24127431197286,
+      "entry_fee": 0.0,
+      "stop": 122.98948986706813,
+      "bars_held": 0,
+      "peak_close": 127.66210003272458
+    }
+  ],
+  "pending_entries": [],
+  "pending_exits": {
+    "NVDA": "signal",
+    "VFV.TO": "signal"
+  },
+  "last_close": {
+    "NVDA": 145.97999572753906,
+    "VFV.TO": 127.66210003272458
+  },
+  "notes": [
+    "NVDA: exit rule already true at the 2026-11-19 close; sell queued for the next open",
+    "VFV.TO: exit rule already true at the 2026-11-19 close; sell queued for the next open"
+  ]
+}
