@@ -1,9 +1,11 @@
 {
-  "status": "ORDERS EXPIRED",
-  "status_detail": "The opening time for 2026-11-20 has passed.",
-  "data_problems": [],
+  "status": "DATA ERROR",
+  "status_detail": "Some data failed the checks, so the ledger stopped at the last good session.",
+  "data_problems": [
+    "2026-11-20: 49/50 candidates have quotes. Missing: SNDK."
+  ],
   "asof": "2026-11-19",
-  "latest_completed_session": "2026-11-19",
+  "latest_completed_session": "2026-11-20",
   "orders_valid_for_open_of": "2026-11-20",
   "orders_expire_at": "2026-11-20T14:30:00+00:00",
   "start": "2026-11-19",
@@ -108,5 +110,5 @@
   },
   "closed_trades": [],
   "fees_paid": 0,
-  "report_markdown": "# Paper trading report 2026-11-19\n\n**Status: ORDERS EXPIRED**. The opening time for 2026-11-20 has passed.\n\n- Data: recorded through 2026-11-19; latest completed NYSE session 2026-11-19\n- Account (simulated money): **CAD 1,984.73** (-0.76% on CAD 2,000 since 2026-11-19); all of it in VFV (S&P 500, CAD) over the same period: +0.00%\n- Booked in USD (US 1,384.94) because the strategy trades US stocks; USD/CAD 1.4331. Currency conversion costs are not modeled.\n- NVDA: exit rule already true at the 2026-11-19 close; sell queued for the next open\n- VFV.TO: exit rule already true at the 2026-11-19 close; sell queued for the next open\n- Market filter: OFF, SPY below its 200-day MA, no new buys\n- Universe: S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly\n- Buyable this month (50): AAPL AMAT AMD AMZN AVGO BAC BE BRK-B CAT COHR COIN COST CRM CRWD CSCO CVX DELL GEV GOOGL GS HOOD INTC JNJ JPM KLAC LITE LLY LRCX MA META MRNA MRVL MSFT MU NFLX NOW NVDA ORCL PANW PLTR QCOM SNDK STX TSLA TXN UNH V WDC WMT XOM\n\n## Orders for the open of 2026-11-20 (valid for that open only)\nNo active orders published.\n\n## Open positions\n| Symbol | Shares | Entry date | Entry price | Last close | P/L | Stop |\n|---|---|---|---|---|---|---|\n| NVDA | 1.0000 | 2026-11-19 | $154.32 | $145.98 | -5.4% | $122.18 |\n| VFV.TO | 4.0000 | 2026-11-19 | $128.24 | $127.66 | -0.5% | $122.99 |\n\n## Risk\n- Cash 53%, invested 47%, largest position VFV.TO 37%\n- If every stop were hit at its stop price: −3.1% of equity. Overnight gaps can make the real loss larger (worst single trade in the backtest: −4.96% of equity).\n\n## Closed trades\nNone yet.\n"
+  "report_markdown": "# Paper trading report 2026-11-19\n\n**Status: DATA ERROR**. Some data failed the checks, so the ledger stopped at the last good session.\n\n- Data: recorded through 2026-11-19; latest completed NYSE session 2026-11-20\n- Account (simulated money): **CAD 1,984.73** (-0.76% on CAD 2,000 since 2026-11-19); all of it in VFV (S&P 500, CAD) over the same period: +0.00%\n- Booked in USD (US 1,384.94) because the strategy trades US stocks; USD/CAD 1.4331. Currency conversion costs are not modeled.\n- NVDA: exit rule already true at the 2026-11-19 close; sell queued for the next open\n- VFV.TO: exit rule already true at the 2026-11-19 close; sell queued for the next open\n- Market filter: OFF, SPY below its 200-day MA, no new buys\n- Universe: S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly\n- Buyable this month (50): AAPL AMAT AMD AMZN AVGO BAC BE BRK-B CAT COHR COIN COST CRM CRWD CSCO CVX DELL GEV GOOGL GS HOOD INTC JNJ JPM KLAC LITE LLY LRCX MA META MRNA MRVL MSFT MU NFLX NOW NVDA ORCL PANW PLTR QCOM SNDK STX TSLA TXN UNH V WDC WMT XOM\n\n## Data problems (no new orders published)\n- 2026-11-20: 49/50 candidates have quotes. Missing: SNDK.\n\n## Orders for the open of 2026-11-20 (valid for that open only)\nNo active orders published.\n\n## Open positions\n| Symbol | Shares | Entry date | Entry price | Last close | P/L | Stop |\n|---|---|---|---|---|---|---|\n| NVDA | 1.0000 | 2026-11-19 | $154.32 | $145.98 | -5.4% | $122.18 |\n| VFV.TO | 4.0000 | 2026-11-19 | $128.24 | $127.66 | -0.5% | $122.99 |\n\n## Risk\n- Cash 53%, invested 47%, largest position VFV.TO 37%\n- If every stop were hit at its stop price: −3.1% of equity. Overnight gaps can make the real loss larger (worst single trade in the backtest: −4.96% of equity).\n\n## Closed trades\nNone yet.\n"
 }
