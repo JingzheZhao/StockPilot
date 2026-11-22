@@ -196,6 +196,13 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
         L.append("## Data problems (no new orders published)")
         L += [f"- {p}" for p in problems]
         L.append("")
+    skipped = last.get("candidates_not_evaluated", []) if last else []
+    if skipped:
+        L.append(f"## Data note for {asof.date()}")
+        L.append(f"- Not evaluated (no usable price that day, so not buyable): {', '.join(skipped)}. "
+                 f"The other {len(universe_now) - len(skipped) if universe_now else 'candidates'} were checked "
+                 "normally.")
+        L.append("")
 
     L.append(f"## Orders for the open of {nxt.date()} (valid for that open only)")
     orders = last["new_orders"] if last and status == "ORDERS QUEUED" else []
@@ -294,6 +301,7 @@ def build_report(status: str, why: str, state: dict, days: list[dict], cfg: dict
                                  "candidates": o["candidates"], "sized_by": o["sized_by"],
                                  "planned_stop": round(o["planned_stop"], 2)} for o in orders]),
         "no_signal_reasons": diag if status == "NO SIGNAL" else None,
+        "candidates_not_evaluated": skipped,
         "positions": [{"symbol": p["symbol"], "shares": round(p["shares"], 4), "entry_date": p["entry_date"],
                        "entry_price": round(p["entry_price"], 2),
                        "last_close": round(state["last_close"][p["symbol"]], 2),
@@ -426,14 +434,14 @@ def main() -> None:
     for day in todo or ([expected] if expected in market.index else []):
         eligible = eligible_on(day)
         ranked = len(eligible)
-        missing = sorted(s for s in eligible if s not in frames or day not in frames[s].index)
+        missing, too_many = ledger.candidate_gaps(day, frames, eligible)
         if cfg["universe"] == "sp500" and ranked < SP500_TOP_N:
             problems.append(f"{day.date()}: only {ranked}/{SP500_TOP_N} candidates could be ranked.")
-        elif missing:
+        elif too_many:
             problems.append(f"{day.date()}: {ranked - len(missing)}/{ranked} candidates have quotes. "
                             f"Missing: {', '.join(missing)}.")
         else:
-            continue
+            continue  # a few missing candidates are skipped and listed by the ledger
         todo = [d for d in todo if d < day]
         break
 

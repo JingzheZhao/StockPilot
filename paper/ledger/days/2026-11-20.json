@@ -1,0 +1,50 @@
+{
+  "date": "2026-11-20",
+  "sells": [
+    {
+      "symbol": "NVDA",
+      "entry_date": "2026-11-19",
+      "entry_price": 154.32,
+      "exit_date": "2026-11-20",
+      "exit_price": 143.44824427032472,
+      "shares": 1.0,
+      "fees": 1.0,
+      "pnl": -11.871755729675272,
+      "return_pct": -0.07692946947690042,
+      "bars_held": 0,
+      "exit_reason": "signal"
+    },
+    {
+      "symbol": "VFV.TO",
+      "entry_date": "2026-11-19",
+      "entry_price": 128.24127431197286,
+      "exit_date": "2026-11-20",
+      "exit_price": 126.61424701850036,
+      "shares": 4.0,
+      "fees": 1.0,
+      "pnl": -7.508109173889977,
+      "return_pct": -0.014636686227136557,
+      "bars_held": 0,
+      "exit_reason": "signal"
+    }
+  ],
+  "buys": [],
+  "skipped_buys": [],
+  "new_orders": [],
+  "new_exits": {},
+  "equity": 1376.2156766349358,
+  "positions": 0,
+  "free_slots": 5,
+  "candidates_not_evaluated": [
+    "SNDK"
+  ],
+  "corporate_actions": [],
+  "state": {
+    "asof": "2026-11-20",
+    "cash": 1376.2156766349358,
+    "positions": [],
+    "pending_entries": [],
+    "pending_exits": {},
+    "last_close": {}
+  }
+}

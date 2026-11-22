@@ -28,6 +28,19 @@ import pandas as pd
 from .backtest.engine import BacktestConfig, Order, Position, Simulator
 
 MIN_COVERAGE = 0.95  # share of this month's index members that must have a price
+# Buy candidates (not held, not ordered) without a usable bar are skipped for
+# that day and listed in the record, unless more than this share is missing,
+# which points to a broken data feed rather than one bad quote. Yahoo sometimes
+# publishes a bar with no close (SNDK on 2026-11-20); that alone must not halt
+# the account.
+MAX_MISSING_CANDIDATES = 0.10
+
+
+def candidate_gaps(day: pd.Timestamp, frames: dict, candidates: set[str]) -> tuple[list[str], bool]:
+    """(candidates without a bar on `day`, whether that is too many to continue)."""
+    missing = sorted(s for s in candidates if s not in frames or day not in frames[s].index)
+    too_many = bool(candidates) and len(missing) / len(candidates) > MAX_MISSING_CANDIDATES
+    return missing, too_many
 SPLIT_TOLERANCE = 0.005  # stored vs re-downloaded close differing more than this = corporate action
 
 
@@ -190,14 +203,15 @@ def advance(state: dict, frames: dict, cfg: BacktestConfig, sessions: list[pd.Ti
     for day in sessions:
         must = set(sim.positions) | set(sim.pending_exits) | {o.symbol for o in sim.pending_entries}
         found = check_session(day, frames, must, members_for(day))
-        missing_candidates = sorted(s for s in eligible_for(day)
-                                    if s not in frames or day not in frames[s].index)
-        if missing_candidates:
-            found.append(f"missing candidate quotes: {', '.join(missing_candidates)}")
+        cands = eligible_for(day)
+        skipped, too_many = candidate_gaps(day, frames, cands)
+        if too_many:
+            found.append(f"missing candidate quotes ({len(skipped)}/{len(cands)}): {', '.join(skipped)}")
         if found:
             problems = [f"{day.date()}: {p}" for p in found]
             break
         log = _jsonable(sim.step(day))  # dates as "YYYY-MM-DD", ready to save
+        log["candidates_not_evaluated"] = skipped  # no usable bar that day; not buyable
         log["corporate_actions"] = [] if records else events
         log["state"] = snapshot_state(sim, day)
         records.append(log)

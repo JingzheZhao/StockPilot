@@ -124,6 +124,21 @@ def test_resume_after_first_daily_record_without_updating_legacy_checkpoint(tmp_
     assert load_state(tmp_path) == expected
 
 
+def test_one_missing_candidate_is_skipped_not_blocking(world, monkeypatch):
+    """Yahoo published SNDK on 2026-11-20 with no close; that must not halt the account."""
+    import stockpilot.ledger as ledger_mod
+
+    _, market, frames = world
+    day = market.index[400]
+    initial = new_state(market.index[399], 3000.0)
+    cands = set(frames) | {"SNDK"}  # 8 priced candidates + 1 without a bar (1/9 = 11%)
+    monkeypatch.setattr(ledger_mod, "MAX_MISSING_CANDIDATES", 0.20)
+    state, records, issues = advance(initial, frames, BacktestConfig(), [day], no_members, lambda _: cands)
+    assert issues == [] and len(records) == 1
+    assert records[0]["candidates_not_evaluated"] == ["SNDK"]
+    assert state["asof"] == str(day.date())
+
+
 def test_missing_eligible_quote_blocks_session_even_with_good_index_coverage(world):
     _, market, frames = world
     day = market.index[400]
@@ -131,7 +146,7 @@ def test_missing_eligible_quote_blocks_session_even_with_good_index_coverage(wor
     state, records, issues = advance(initial, frames, BacktestConfig(), [day], no_members, lambda _: {"MISSING"})
     assert not records
     assert state == initial
-    assert "missing candidate quotes: MISSING" in issues[0]
+    assert "missing candidate quotes (1/1): MISSING" in issues[0]  # all candidates missing: broken feed
 
 
 
