@@ -2,10 +2,10 @@
   "status": "NO SIGNAL",
   "status_detail": "Data is complete and no buy or sell rule fired.",
   "data_problems": [],
-  "asof": "2026-11-20",
-  "latest_completed_session": "2026-11-20",
-  "orders_valid_for_open_of": "2026-11-23",
-  "orders_expire_at": "2026-11-23T14:30:00+00:00",
+  "asof": "2026-11-23",
+  "latest_completed_session": "2026-11-23",
+  "orders_valid_for_open_of": "2026-11-24",
+  "orders_expire_at": "2026-11-24T14:30:00+00:00",
   "start": "2026-11-19",
   "strategy": "breakout",
   "universe": "S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly",
@@ -64,33 +64,35 @@
   "currency": "CAD",
   "account_opened": true,
   "initial_capital": 2000.0,
-  "equity": 1973.97,
+  "equity": 1973.33,
   "equity_usd": 1376.22,
-  "usdcad": 1.4343500137329102,
-  "return_pct": -0.013,
+  "usdcad": 1.4338799715042114,
+  "return_pct": -0.0133,
   "benchmark": "all of it in VFV (S&P 500, CAD)",
-  "benchmark_return_pct": -0.0364,
+  "benchmark_return_pct": 0.0097,
   "notes": [],
   "market_filter_on": false,
   "next_open_orders": [],
   "no_signal_reasons": {
     "buyable": 49,
     "evaluated": 49,
-    "above_50d_ma": 8,
-    "new_20d_high": 0,
-    "both": [],
+    "above_50d_ma": 12,
+    "new_20d_high": 1,
+    "both": [
+      "WMT"
+    ],
     "closest": [
       [
-        "WMT",
-        0.009534984367343347
-      ],
-      [
         "COST",
-        0.01051577876294485
+        0.014418263393061181
       ],
       [
         "AAPL",
-        0.04002216123537039
+        0.020597005608964603
+      ],
+      [
+        "BRK-B",
+        0.03595642186132708
       ]
     ]
   },
@@ -123,5 +125,5 @@
     }
   ],
   "fees_paid": 2.0,
-  "report_markdown": "# Paper trading report 2026-11-20\n\n**Status: NO SIGNAL**. Data is complete and no buy or sell rule fired.\n\n- Data: recorded through 2026-11-20; latest completed NYSE session 2026-11-20\n- Account (simulated money): **CAD 1,973.97** (-1.30% on CAD 2,000 since 2026-11-19); all of it in VFV (S&P 500, CAD) over the same period: -3.64%\n- Booked in USD (US 1,376.22) because the strategy trades US stocks; USD/CAD 1.4344. Currency conversion costs are not modeled.\n- Market filter: OFF, SPY below its 200-day MA, no new buys\n- Universe: S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly\n- Buyable this month (50): AAPL AMAT AMD AMZN AVGO BAC BE BRK-B CAT COHR COIN COST CRM CRWD CSCO CVX DELL GEV GOOGL GS HOOD INTC JNJ JPM KLAC LITE LLY LRCX MA META MRNA MRVL MSFT MU NFLX NOW NVDA ORCL PANW PLTR QCOM SNDK STX TSLA TXN UNH V WDC WMT XOM\n\n## Data note for 2026-11-20\n- Not evaluated (no usable price that day, so not buyable): SNDK. The other 49 were checked normally.\n\n## Orders for the open of 2026-11-23 (valid for that open only)\nNone.\n\n## Why no orders\n- The market filter is off, so no new positions are opened.\n- Of 49 buyable stocks with a price (not already held), 8 closed above their 50-day MA and 0 made a new 20-day closing high; 0 did both.\n- Closest to a signal (above the 50-day MA, gain needed for a new 20-day high): WMT (+1.0%), COST (+1.1%), AAPL (+4.0%)\n\n## Simulated fills on 2026-11-20\n- Sold NVDA at $143.45: closed below 50-day MA, P/L $-11.87 (-7.7%)\n- Sold VFV.TO at $126.61: closed below 50-day MA, P/L $-7.51 (-1.5%)\n\n## Open positions\nNone.\n\n## Risk\n- Cash 100%, invested 0%, largest position none\n- No positions, so nothing is at risk.\n\n## Closed trades\n| Symbol | Entry date | Exit date | P/L | Return | Reason |\n|---|---|---|---|---|---|\n| NVDA | 2026-11-19 | 2026-11-20 | $-11.87 | -7.7% | closed below 50-day MA |\n| VFV.TO | 2026-11-19 | 2026-11-20 | $-7.51 | -1.5% | closed below 50-day MA |\n"
+  "report_markdown": "# Paper trading report 2026-11-23\n\n**Status: NO SIGNAL**. Data is complete and no buy or sell rule fired.\n\n- Data: recorded through 2026-11-23; latest completed NYSE session 2026-11-23\n- Account (simulated money): **CAD 1,973.33** (-1.33% on CAD 2,000 since 2026-11-19); all of it in VFV (S&P 500, CAD) over the same period: +0.97%\n- Booked in USD (US 1,376.22) because the strategy trades US stocks; USD/CAD 1.4339. Currency conversion costs are not modeled.\n- Market filter: OFF, SPY below its 200-day MA, no new buys\n- Universe: S&P 500 members, top 50 by 60-day dollar volume, refreshed monthly\n- Buyable this month (50): AAPL AMAT AMD AMZN AVGO BAC BE BRK-B CAT COHR COIN COST CRM CRWD CSCO CVX DELL GEV GOOGL GS HOOD INTC JNJ JPM KLAC LITE LLY LRCX MA META MRNA MRVL MSFT MU NFLX NOW NVDA ORCL PANW PLTR QCOM SNDK STX TSLA TXN UNH V WDC WMT XOM\n\n## Data note for 2026-11-23\n- Not evaluated (no usable price that day, so not buyable): SNDK. The other 49 were checked normally.\n\n## Orders for the open of 2026-11-24 (valid for that open only)\nNone.\n\n## Why no orders\n- The market filter is off, so no new positions are opened.\n- Of 49 buyable stocks with a price (not already held), 12 closed above their 50-day MA and 1 made a new 20-day closing high; 1 did both.\n- Closest to a signal (above the 50-day MA, gain needed for a new 20-day high): COST (+1.4%), AAPL (+2.1%), BRK-B (+3.6%)\n\n## Open positions\nNone.\n\n## Risk\n- Cash 100%, invested 0%, largest position none\n- No positions, so nothing is at risk.\n\n## Closed trades\n| Symbol | Entry date | Exit date | P/L | Return | Reason |\n|---|---|---|---|---|---|\n| NVDA | 2026-11-19 | 2026-11-20 | $-11.87 | -7.7% | closed below 50-day MA |\n| VFV.TO | 2026-11-19 | 2026-11-20 | $-7.51 | -1.5% | closed below 50-day MA |\n"
 }

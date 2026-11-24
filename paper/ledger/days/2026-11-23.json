@@ -1,0 +1,23 @@
+{
+  "date": "2026-11-23",
+  "sells": [],
+  "buys": [],
+  "skipped_buys": [],
+  "new_orders": [],
+  "new_exits": {},
+  "equity": 1376.2156766349358,
+  "positions": 0,
+  "free_slots": 5,
+  "candidates_not_evaluated": [
+    "SNDK"
+  ],
+  "corporate_actions": [],
+  "state": {
+    "asof": "2026-11-23",
+    "cash": 1376.2156766349358,
+    "positions": [],
+    "pending_entries": [],
+    "pending_exits": {},
+    "last_close": {}
+  }
+}
