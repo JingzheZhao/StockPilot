@@ -1,0 +1,10 @@
+# The Muse connector is deployed on its own (Vercel root directory: muse/).
+# It uses only the Python standard library. This file keeps Vercel's
+# installer from walking up to the repository's pyproject.toml and installing
+# the ~57 research packages (pandas, matplotlib, ...) it never imports; one of
+# them shipping a broken release failed a deployment on 2026-11-25.
+[project]
+name = "stockpilot-muse"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
